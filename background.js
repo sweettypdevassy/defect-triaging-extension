@@ -150,11 +150,11 @@ async function sendSlackNotificationGrouped(webhookUrl, componentDefectsMap, tot
   let message;
   
   if (totalDefects === 0) {
-    message = `✅ *No Untriaged Defects*\n\nGreat job! There are currently no untriaged defects for any of your monitored components.\n\n_Last checked: ${timestamp}_`;
+    message = `✅ No Untriaged Defects\n\nGreat job! There are currently no untriaged defects for any of your monitored components.\n\nLast checked: ${timestamp}`;
   } else {
     const defectWord = totalDefects === 1 ? 'Defect' : 'Defects';
-    message = `⚠️ *${totalDefects} Untriaged ${defectWord}*\n\n`;
-    message += `Found *${totalDefects}* untriaged ${defectWord.toLowerCase()} across *${componentDefectsMap.length}* component(s).\n\n`;
+    message = `⚠️ ${totalDefects} Untriaged ${defectWord}\n\n`;
+    message += `Found ${totalDefects} untriaged ${defectWord.toLowerCase()} across ${componentDefectsMap.length} component(s).\n\n`;
     message += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
     
     // Add defects grouped by component
@@ -162,17 +162,20 @@ async function sendSlackNotificationGrouped(webhookUrl, componentDefectsMap, tot
       const { componentName, defects } = componentData;
       const componentDefectCount = defects.length;
       
-      message += `📦 *${componentName}* (${componentDefectCount} ${componentDefectCount === 1 ? 'defect' : 'defects'})\n\n`;
+      message += `📦 ${componentName} (${componentDefectCount} ${componentDefectCount === 1 ? 'defect' : 'defects'})\n\n`;
       
       // Show up to 5 defects per component
       const defectsToShow = defects.slice(0, 5);
       
       defectsToShow.forEach((defect, index) => {
-        message += `*${index + 1}. Defect ID:* ${defect.id}\n`;
-        message += `*Summary:* ${defect.summary}\n`;
-        message += `*Builds Reported:* ${defect.buildsReported}\n`;
-        message += `*State:* ${defect.state}\n`;
-        message += `*Owner:* ${defect.owner}\n`;
+        const defectLink = `https://wasrtc.hursley.ibm.com:9443/jazz/web/projects/WS-CD#action=com.ibm.team.workitem.viewWorkItem&id=${defect.id}`;
+        
+        message += `${index + 1}. Defect ID: ${defect.id}\n`;
+        message += `   Link: ${defectLink}\n`;
+        message += `   Summary: ${defect.summary}\n`;
+        message += `   Triage Tags: ${defect.triageTags}\n`;
+        message += `   State: ${defect.state}\n`;
+        message += `   Owner: ${defect.owner}\n`;
         
         if (index < defectsToShow.length - 1) {
           message += `\n`;
@@ -180,7 +183,7 @@ async function sendSlackNotificationGrouped(webhookUrl, componentDefectsMap, tot
       });
       
       if (defects.length > 5) {
-        message += `\n_... and ${defects.length - 5} more defect(s) for ${componentName}_\n`;
+        message += `\n... and ${defects.length - 5} more defect(s) for ${componentName}\n`;
       }
       
       // Add separator between components
@@ -189,7 +192,7 @@ async function sendSlackNotificationGrouped(webhookUrl, componentDefectsMap, tot
       }
     });
     
-    message += `\n\n_Last checked: ${timestamp}_`;
+    message += `\n\nLast checked: ${timestamp}`;
   }
   
   // Send to Slack
@@ -217,17 +220,17 @@ async function sendErrorNotification(webhookUrl, error) {
   
   // Provide specific guidance based on error type
   if (errorMessage.includes('Not logged in')) {
-    errorDetails = '\n\n*Action Required:*\n• Open Chrome and visit https://libh-proxy1.fyre.ibm.com/buildBreakReport/\n• Log in with your W3 ID credentials\n• The extension will work once you\'re logged in';
+    errorDetails = '\n\nAction Required:\n• Open Chrome and visit https://libh-proxy1.fyre.ibm.com/buildBreakReport/\n• Log in with your W3 ID credentials\n• The extension will work once you\'re logged in';
   } else if (errorMessage.includes('API request failed')) {
-    errorDetails = '\n\n*Possible Causes:*\n• IBM Build Break Report system is down\n• Network connectivity issues\n• VPN connection required';
+    errorDetails = '\n\nPossible Causes:\n• IBM Build Break Report system is down\n• Network connectivity issues\n• VPN connection required';
   } else if (errorMessage.includes('Slack notification failed')) {
-    errorDetails = '\n\n*Possible Causes:*\n• Invalid Slack webhook URL\n• Slack workspace permissions changed\n• Network connectivity issues';
+    errorDetails = '\n\nPossible Causes:\n• Invalid Slack webhook URL\n• Slack workspace permissions changed\n• Network connectivity issues';
   }
   
-  const message = `🚨 *Defect Triaging Extension Error*\n\n` +
+  const message = `🚨 Defect Triaging Extension Error\n\n` +
                   `The automated defect check encountered an error:\n\n` +
-                  `*Error:* ${errorMessage}${errorDetails}\n\n` +
-                  `_Time: ${timestamp}_`;
+                  `Error: ${errorMessage}${errorDetails}\n\n` +
+                  `Time: ${timestamp}`;
   
   // Send to Slack
   const response = await fetch(webhookUrl, {
@@ -427,22 +430,25 @@ async function sendSlackNotification(webhookUrl, componentName, defects) {
   let message;
   
   if (defectCount === 0) {
-    message = `✅ *No Untriaged Defects*\n\nGreat job! There are currently no untriaged defects for the *${componentName}* component.\n\n_Last checked: ${timestamp}_`;
+    message = `✅ No Untriaged Defects\n\nGreat job! There are currently no untriaged defects for the ${componentName} component.\n\nLast checked: ${timestamp}`;
   } else {
     const defectWord = defectCount === 1 ? 'defect' : 'defects';
-    message = `⚠️ *${defectCount} Untriaged ${defectWord.charAt(0).toUpperCase() + defectWord.slice(1)}*\n\n`;
-    message += `There ${defectCount === 1 ? 'is' : 'are'} *${defectCount}* untriaged ${defectWord} for the *${componentName}* component that need${defectCount === 1 ? 's' : ''} attention.\n\n`;
+    message = `⚠️ ${defectCount} Untriaged ${defectWord.charAt(0).toUpperCase() + defectWord.slice(1)}\n\n`;
+    message += `There ${defectCount === 1 ? 'is' : 'are'} ${defectCount} untriaged ${defectWord} for the ${componentName} component that need${defectCount === 1 ? 's' : ''} attention.\n\n`;
     message += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
     
     // Add details for each defect (limit to first 10)
     const defectsToShow = defects.slice(0, 10);
     
     defectsToShow.forEach((defect, index) => {
-      message += `*${index + 1}. Defect ID:* ${defect.id}\n`;
-      message += `*Summary:* ${defect.summary}\n`;
-      message += `*Builds Reported:* ${defect.buildsReported}\n`;
-      message += `*State:* ${defect.state}\n`;
-      message += `*Owner:* ${defect.owner}\n`;
+      const defectLink = `https://wasrtc.hursley.ibm.com:9443/jazz/web/projects/WS-CD#action=com.ibm.team.workitem.viewWorkItem&id=${defect.id}`;
+      
+      message += `${index + 1}. Defect ID: ${defect.id}\n`;
+      message += `   Link: ${defectLink}\n`;
+      message += `   Summary: ${defect.summary}\n`;
+      message += `   Triage Tags: ${defect.triageTags}\n`;
+      message += `   State: ${defect.state}\n`;
+      message += `   Owner: ${defect.owner}\n`;
       
       if (index < defectsToShow.length - 1) {
         message += `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
@@ -450,10 +456,10 @@ async function sendSlackNotification(webhookUrl, componentName, defects) {
     });
     
     if (defects.length > 10) {
-      message += `\n\n_... and ${defects.length - 10} more defect(s)_`;
+      message += `\n\n... and ${defects.length - 10} more defect(s)`;
     }
     
-    message += `\n\n_Last checked: ${timestamp}_`;
+    message += `\n\nLast checked: ${timestamp}`;
   }
   
   // Send to Slack
