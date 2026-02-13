@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Defect Triaging Notifier",
+  "version": "1.0.0",
+  "description": "Automated Slack notifications for untriaged defects from IBM Liberty Build Break Report",
+  "permissions": [
+    "alarms",
+    "storage",
+    "notifications"
+  ],
+  "host_permissions": [
+    "https://libh-proxy1.fyre.ibm.com/*",
+    "https://hooks.slack.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html"
+}
