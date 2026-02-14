@@ -6,6 +6,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Set up event listeners
   document.getElementById('settingsForm').addEventListener('submit', saveSettings);
   document.getElementById('testBtn').addEventListener('click', testNow);
+  document.getElementById('clearDashboardBtn').addEventListener('click', clearAndRegenerateDashboard);
 });
 
 // Load current settings
@@ -106,6 +107,44 @@ async function testNow() {
   } finally {
     button.disabled = false;
     button.textContent = 'Test Now';
+  }
+}
+
+// Clear and regenerate dashboard data
+async function clearAndRegenerateDashboard() {
+  const button = document.getElementById('clearDashboardBtn');
+  const originalText = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Clearing...';
+  
+  try {
+    // Clear old dashboard data
+    await chrome.storage.local.remove(['dailySnapshots', 'weeklyDashboardData']);
+    showMessage('✓ Old data cleared. Regenerating with current defect counts...', 'success');
+    
+    // Wait a moment
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    // Trigger a check to create new snapshot
+    button.textContent = 'Generating...';
+    const response = await chrome.runtime.sendMessage({ action: 'checkNow' });
+    
+    if (response.success) {
+      // Wait for snapshot to be stored
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      // Generate dashboard
+      await chrome.runtime.sendMessage({ action: 'generateDashboard' });
+      
+      showMessage('✓ Dashboard data regenerated successfully! Refresh the dashboard page to see updated values.', 'success');
+    } else {
+      showMessage('✗ Error regenerating data: ' + response.error, 'error');
+    }
+  } catch (error) {
+    showMessage('✗ Error: ' + error.message, 'error');
+  } finally {
+    button.disabled = false;
+    button.textContent = originalText;
   }
 }
 

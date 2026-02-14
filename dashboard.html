@@ -388,7 +388,7 @@
         <!-- Row 3: Top Components + Week vs Week -->
         <div class="row-3">
             <div class="chart-card">
-                <div class="chart-title">👑 Top Affected Components</div>
+                <div class="chart-title">📊 Component-wise Defect Status</div>
                 <div class="chart-container">
                     <canvas id="barChart"></canvas>
                 </div>
@@ -402,20 +402,19 @@
             </div>
         </div>
 
-        <!-- Row 4: Recent Defects Table -->
+        <!-- Row 4: SOE Triage Overdue Defects Table -->
         <div class="table-section">
-            <div class="chart-title">🔥 Recent Defects</div>
+            <div class="chart-title">⚠️ SOE Triage: Overdue Defects</div>
             <div class="table-wrapper">
                 <table class="defects-table">
                     <thead>
                         <tr>
                             <th>ID</th>
-                            <th>Title</th>
-                            <th>Component</th>
-                            <th>Severity</th>
-                            <th>Status</th>
-                            <th>Reported</th>
-                            <th>Assignee</th>
+                            <th>Summary</th>
+                            <th>Functional Area</th>
+                            <th>Filed Against</th>
+                            <th>Creation Date</th>
+                            <th>Owned By</th>
                         </tr>
                     </thead>
                     <tbody id="defectsTableBody">

@@ -711,9 +711,85 @@ async function storeDailySnapshot(componentDefectsMap, totalDefects) {
       testBugs: testBugs,
       productBugs: productBugs,
       infraBugs: infraBugs,
-      componentBreakdown: componentDefectsMap.map(c => ({
-        name: c.componentName,
-        count: c.defects.length
+      componentBreakdown: await Promise.all(componentNames.map(async (componentName) => {
+        const apiUrl = `https://libh-proxy1.fyre.ibm.com/buildBreakReport/rest2/defects/buildbreak/fas?fas=${encodeURIComponent(componentName)}`;
+        
+        try {
+          const response = await fetch(apiUrl, {
+            credentials: 'include',
+            headers: { 'Accept': 'application/json' }
+          });
+          
+          if (response.ok) {
+            const data = await response.json();
+            const allDefects = Array.isArray(data) ? data : (data.defects || []);
+            
+            let compUntriaged = 0;
+            let compTestBugs = 0;
+            let compProductBugs = 0;
+            let compInfraBugs = 0;
+            
+            allDefects.forEach(defect => {
+              const triageTags = (defect.triageTags || defect.tags || []);
+              const tagsArray = Array.isArray(triageTags) ? triageTags : [];
+              
+              const hasTriagedTag = tagsArray.some(tag => {
+                const lowerTag = tag.toLowerCase();
+                return lowerTag.includes('test_bug') ||
+                       lowerTag.includes('product_bug') ||
+                       lowerTag.includes('infrastructure_bug') ||
+                       lowerTag === 'test' ||
+                       lowerTag === 'product' ||
+                       lowerTag === 'infrastructure';
+              });
+              
+              if (!hasTriagedTag) {
+                compUntriaged++;
+              } else {
+                const hasTestTag = tagsArray.some(tag => {
+                  const lowerTag = tag.toLowerCase();
+                  return lowerTag.includes('test_bug') || lowerTag === 'test';
+                });
+                const hasProductTag = tagsArray.some(tag => {
+                  const lowerTag = tag.toLowerCase();
+                  return lowerTag.includes('product_bug') || lowerTag === 'product';
+                });
+                const hasInfraTag = tagsArray.some(tag => {
+                  const lowerTag = tag.toLowerCase();
+                  return lowerTag.includes('infrastructure_bug') || lowerTag === 'infrastructure';
+                });
+                
+                if (hasTestTag) {
+                  compTestBugs++;
+                } else if (hasProductTag) {
+                  compProductBugs++;
+                } else if (hasInfraTag) {
+                  compInfraBugs++;
+                }
+              }
+            });
+            
+            return {
+              name: componentName,
+              total: allDefects.length,
+              untriaged: compUntriaged,
+              testBugs: compTestBugs,
+              productBugs: compProductBugs,
+              infraBugs: compInfraBugs
+            };
+          }
+        } catch (error) {
+          console.error(`Error fetching component breakdown for ${componentName}:`, error);
+        }
+        
+        return {
+          name: componentName,
+          total: 0,
+          untriaged: 0,
+          testBugs: 0,
+          productBugs: 0,
+          infraBugs: 0
+        };
       }))
     };
     
@@ -760,62 +836,39 @@ async function generateWeeklyDashboard() {
       untriaged: dates.map(d => snapshots[d]?.untriaged || 0)
     };
     
-    // Calculate this week's totals
-    const thisWeekData = dates.reduce((acc, date) => {
-      const snapshot = snapshots[date] || {};
-      return {
-        total: acc.total + (snapshot.total || 0),
-        untriaged: acc.untriaged + (snapshot.untriaged || 0),
-        testBugs: acc.testBugs + (snapshot.testBugs || 0),
-        productBugs: acc.productBugs + (snapshot.productBugs || 0),
-        infraBugs: acc.infraBugs + (snapshot.infraBugs || 0)
-      };
-    }, { total: 0, untriaged: 0, testBugs: 0, productBugs: 0, infraBugs: 0 });
+    // Get the latest (most recent) snapshot data for current counts
+    const latestDate = dates[dates.length - 1];
+    const latestSnapshot = snapshots[latestDate] || {};
     
-    // Calculate last week's totals for comparison
-    const lastWeekDates = [];
-    for (let i = 13; i >= 7; i--) {
-      const date = new Date();
-      date.setDate(date.getDate() - i);
-      lastWeekDates.push(date.toISOString().split('T')[0]);
-    }
+    const thisWeekData = {
+      total: latestSnapshot.total || 0,
+      untriaged: latestSnapshot.untriaged || 0,
+      testBugs: latestSnapshot.testBugs || 0,
+      productBugs: latestSnapshot.productBugs || 0,
+      infraBugs: latestSnapshot.infraBugs || 0
+    };
     
-    const lastWeekData = lastWeekDates.reduce((acc, date) => {
-      const snapshot = snapshots[date] || {};
-      return {
-        total: acc.total + (snapshot.total || 0),
-        untriaged: acc.untriaged + (snapshot.untriaged || 0)
-      };
-    }, { total: 0, untriaged: 0 });
+    // Get last week's data for comparison (7 days ago)
+    const lastWeekDate = new Date();
+    lastWeekDate.setDate(lastWeekDate.getDate() - 7);
+    const lastWeekDateStr = lastWeekDate.toISOString().split('T')[0];
+    const lastWeekSnapshot = snapshots[lastWeekDateStr] || {};
+    
+    const lastWeekData = {
+      total: lastWeekSnapshot.total || 0,
+      untriaged: lastWeekSnapshot.untriaged || 0
+    };
     
     // Calculate trend percentage
     const trendPercentage = lastWeekData.total > 0
       ? Math.round(((thisWeekData.total - lastWeekData.total) / lastWeekData.total) * 100)
       : 0;
     
-    // Get component breakdown from most recent snapshot
-    const latestDate = dates[dates.length - 1];
-    const latestSnapshot = snapshots[latestDate] || {};
+    // Get component breakdown from most recent snapshot (already defined above)
     const componentBreakdown = latestSnapshot.componentBreakdown || [];
     
-    // Build component details
-    const componentDetails = componentBreakdown.map(comp => {
-      // Calculate totals for this component across the week
-      const weeklyData = dates.reduce((acc, date) => {
-        const snapshot = snapshots[date] || {};
-        const compData = (snapshot.componentBreakdown || []).find(c => c.name === comp.name);
-        return acc + (compData?.count || 0);
-      }, 0);
-      
-      return {
-        name: comp.name,
-        total: weeklyData,
-        untriaged: comp.count,
-        testBugs: 0, // Simplified for now
-        productBugs: 0,
-        infrastructure: 0
-      };
-    });
+    // Component details are already in the breakdown with full data
+    const componentDetails = componentBreakdown;
     
     // Build priority items
     const priorityItems = [];
@@ -855,7 +908,10 @@ async function generateWeeklyDashboard() {
       componentBreakdown: {
         labels: componentDetails.map(c => c.name),
         total: componentDetails.map(c => c.total),
-        untriaged: componentDetails.map(c => c.untriaged)
+        untriaged: componentDetails.map(c => c.untriaged),
+        testBugs: componentDetails.map(c => c.testBugs),
+        productBugs: componentDetails.map(c => c.productBugs),
+        infraBugs: componentDetails.map(c => c.infraBugs)
       },
       weekComparison: {
         lastWeek: lastWeekData,

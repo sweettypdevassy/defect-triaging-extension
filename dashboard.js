@@ -163,27 +163,36 @@ function renderWeekComparisonChart(data) {
         chartInstances.comparisonChart.destroy();
     }
     
-    // Calculate previous week values based on trend
-    const trendMultiplier = 1 + (data.summary.trendPercentage / 100);
-    const prevTotal = Math.round(data.summary.totalDefects / trendMultiplier);
-    const prevUntriaged = Math.round(data.summary.untriaged / trendMultiplier);
+    // Check if we have last week data
+    const hasLastWeekData = data.weekComparison &&
+                           data.weekComparison.lastWeek &&
+                           data.weekComparison.lastWeek.total > 0;
     
     Chart.defaults.color = '#8899a6';
     Chart.defaults.borderColor = 'rgba(255, 255, 255, 0.05)';
     
+    // If no last week data, show only this week
+    const labels = hasLastWeekData ? ['Last Week', 'This Week'] : ['This Week'];
+    const totalData = hasLastWeekData
+        ? [data.weekComparison.lastWeek.total, data.summary.totalDefects]
+        : [data.summary.totalDefects];
+    const untriagedData = hasLastWeekData
+        ? [data.weekComparison.lastWeek.untriaged, data.summary.untriaged]
+        : [data.summary.untriaged];
+    
     chartInstances.comparisonChart = new Chart(ctx, {
         type: 'bar',
         data: {
-            labels: ['Last Week', 'This Week'],
+            labels: labels,
             datasets: [{
                 label: 'Total',
-                data: [prevTotal, data.summary.totalDefects],
+                data: totalData,
                 backgroundColor: '#1d9bf0',
                 borderRadius: 6,
                 barThickness: 50
             }, {
                 label: 'Untriaged',
-                data: [prevUntriaged, data.summary.untriaged],
+                data: untriagedData,
                 backgroundColor: '#ff6b9d',
                 borderRadius: 6,
                 barThickness: 50
@@ -406,27 +415,58 @@ function renderBarChart(componentBreakdown) {
         chartInstances.barChart.destroy();
     }
     
-    // Show top 6 components
-    const topComponents = componentBreakdown.labels.slice(0, 6);
-    const topTotal = componentBreakdown.total.slice(0, 6);
-    const topUntriaged = componentBreakdown.untriaged.slice(0, 6);
+    // Show all components (no limit)
+    const components = componentBreakdown.labels || [];
+    
+    // Check if we have the new detailed breakdown, otherwise use old format
+    const hasDetailedBreakdown = componentBreakdown.testBugs && componentBreakdown.testBugs.length > 0;
+    
+    let untriaged, testBugs, productBugs, infraBugs;
+    
+    if (hasDetailedBreakdown) {
+        // New format with detailed breakdown
+        untriaged = componentBreakdown.untriaged || [];
+        testBugs = componentBreakdown.testBugs || [];
+        productBugs = componentBreakdown.productBugs || [];
+        infraBugs = componentBreakdown.infraBugs || [];
+    } else {
+        // Old format - show total and untriaged only
+        const total = componentBreakdown.total || [];
+        untriaged = componentBreakdown.untriaged || [];
+        // Calculate triaged as total - untriaged
+        testBugs = total.map((t, i) => Math.max(0, t - (untriaged[i] || 0)));
+        productBugs = [];
+        infraBugs = [];
+    }
     
     chartInstances.barChart = new Chart(ctx, {
         type: 'bar',
         data: {
-            labels: topComponents,
+            labels: components,
             datasets: [{
-                label: 'Total',
-                data: topTotal,
-                backgroundColor: '#1d9bf0',
-                borderRadius: 4,
-                barThickness: 18
-            }, {
                 label: 'Untriaged',
-                data: topUntriaged,
+                data: untriaged,
                 backgroundColor: '#ff6b9d',
                 borderRadius: 4,
-                barThickness: 18
+                barThickness: 15
+            }, {
+                label: 'Test Bugs',
+                data: testBugs,
+                backgroundColor: '#ffad1f',
+                borderRadius: 4,
+                barThickness: 15
+            }, {
+                label: 'Product Bugs',
+                data: productBugs,
+                backgroundColor: '#1d9bf0',
+                borderRadius: 4,
+                barThickness: 15
+            }, {
+                label: 'Infrastructure',
+                data: infraBugs,
+                backgroundColor: '#00d4aa',
+                borderRadius: 4,
+                barThickness: 15
             }]
         },
         options: {
@@ -463,7 +503,7 @@ function renderBarChart(componentBreakdown) {
                 y: {
                     beginAtZero: true,
                     grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false },
-                    ticks: { color: '#8899a6', font: { size: 9 }, stepSize: 20 }
+                    ticks: { color: '#8899a6', font: { size: 9 } }
                 }
             }
         }
@@ -473,57 +513,57 @@ function renderBarChart(componentBreakdown) {
 function renderRecentDefects(data) {
     const tbody = document.getElementById('defectsTableBody');
     
-    // Generate sample recent defects based on actual data
-    const recentDefects = [
+    // TODO: Fetch real defects from Jazz/RTC system
+    // URL: https://wasrtc.hursley.ibm.com:9443/jazz/web/projects/WS-CD#action=com.ibm.team.workitem.runSavedQuery&id=_fJ834OXIEemRB5enIPF1MQ
+    // For now, showing placeholder data with correct structure
+    
+    const soeTriageDefects = [
         {
-            id: '2234.5',
-            title: 'Login failure on SSO',
-            component: 'Authentication',
-            severity: 'critical',
-            status: 'progress',
-            reported: 'Feb 14, 2:30 PM',
-            assignee: '-'
+            id: '123456',
+            summary: 'Defect needs triage - overdue',
+            functionalArea: 'JPA',
+            filedAgainst: 'WebSphere Application Server',
+            creationDate: 'Feb 10, 2026',
+            ownedBy: 'Unassigned'
         },
         {
-            id: '2231.6',
-            title: 'Error on Data Export',
-            component: 'Batch',
-            severity: 'high',
-            status: 'review',
-            reported: 'Feb 11, 1:55 PM',
-            assignee: 'Alex T.'
+            id: '123457',
+            summary: 'Critical issue requiring immediate triage',
+            functionalArea: 'Spring Boot',
+            filedAgainst: 'Liberty Runtime',
+            creationDate: 'Feb 12, 2026',
+            ownedBy: 'John Doe'
         },
         {
-            id: '2233.5',
-            title: 'Slow API Response',
-            component: 'API',
-            severity: 'critical',
-            status: 'review',
-            reported: 'Feb 10, 9:36 AM',
-            assignee: 'Pending K.'
-        },
-        {
-            id: '2238.5',
-            title: 'Error: mid mismatch on dashboard',
-            component: 'UI',
-            severity: 'medium',
-            status: 'resolved',
-            reported: 'Feb 14, 9:35 AM',
-            assignee: 'Marie T.'
+            id: '123458',
+            summary: 'Performance degradation - needs investigation',
+            functionalArea: 'JCA',
+            filedAgainst: 'Resource Adapter',
+            creationDate: 'Feb 13, 2026',
+            ownedBy: 'Jane Smith'
         }
     ];
 
-    tbody.innerHTML = recentDefects.map(defect => `
-        <tr>
-            <td><span class="defect-id">${defect.id}</span></td>
-            <td>${defect.title}</td>
-            <td>${defect.component}</td>
-            <td><span class="severity-badge severity-${defect.severity}">●${defect.severity.charAt(0).toUpperCase() + defect.severity.slice(1)}</span></td>
-            <td><span class="status-badge status-${defect.status}">${defect.status === 'progress' ? 'InProgress' : defect.status === 'review' ? 'Medium1' : 'MRProgress'}</span></td>
-            <td>${defect.reported}</td>
-            <td>${defect.assignee}</td>
-        </tr>
-    `).join('');
+    if (soeTriageDefects.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="6" style="text-align: center; padding: 20px; color: #8899a6;">
+                    No overdue SOE triage defects found
+                </td>
+            </tr>
+        `;
+    } else {
+        tbody.innerHTML = soeTriageDefects.map(defect => `
+            <tr>
+                <td><span class="defect-id">${defect.id}</span></td>
+                <td>${defect.summary}</td>
+                <td>${defect.functionalArea}</td>
+                <td>${defect.filedAgainst}</td>
+                <td>${defect.creationDate}</td>
+                <td>${defect.ownedBy}</td>
+            </tr>
+        `).join('');
+    }
 }
 
 // Load data when page loads
