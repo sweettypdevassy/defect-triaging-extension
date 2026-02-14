@@ -2,16 +2,24 @@
 
 // Default configuration
 const DEFAULT_CONFIG = {
+  ibmUsername: '',
+  ibmPassword: '',
+  autoLogin: true,
   slackWebhookUrl: '',
   componentName: 'Messaging',
   checkTime: '10:00', // 10:00 AM
   enabled: true,
-  lastCheck: null
+  lastCheck: null,
+  vpnConnected: false
 };
 
 // Initialize extension
 chrome.runtime.onInstalled.addListener(async () => {
   console.log('Defect Triaging Notifier installed');
+  
+  // Clear error notification history on extension reload
+  await chrome.storage.local.remove(['lastErrorNotified', 'lastErrorMessage']);
+  console.log('🔄 Cleared error notification history - fresh notifications enabled');
   
   // Load or set default configuration
   const config = await getConfig();
@@ -28,6 +36,9 @@ chrome.runtime.onInstalled.addListener(async () => {
   // Set up weekly dashboard
   console.log('Setting up weekly dashboard...');
   await setupWeeklyDashboardAlarm();
+  
+  // Set up VPN detection and auto-login
+  setupVPNDetection();
 });
 
 // Get configuration from storage
@@ -133,22 +144,7 @@ async function checkForAutoRetry() {
   }
 }
 
-// Handle alarm trigger
-chrome.alarms.onAlarm.addListener(async (alarm) => {
-  if (alarm.name === 'dailyDefectCheck') {
-    console.log('Daily defect check triggered');
-    await checkDefects();
-  } else if (alarm.name === 'keepSessionAlive') {
-    console.log('Session keepalive triggered');
-    await keepSessionAlive();
-  } else if (alarm.name === 'autoRetryCheck') {
-    // Quick check for auto-retry (no API call unless needed)
-    await checkForAutoRetry();
-  } else if (alarm.name === 'weeklyDashboard') {
-    console.log('Weekly dashboard triggered');
-    await sendWeeklyDashboardNotification();
-  }
-});
+// Handle alarm trigger - moved to end of file with VPN check
 
 // Send Slack notification grouped by component
 async function sendSlackNotificationGrouped(webhookUrl, componentDefectsMap, totalDefects) {
@@ -352,21 +348,67 @@ async function checkDefects() {
   } catch (error) {
     console.error('❌ Error checking defects:', error);
     
-    // Mark that we had an error for auto-retry
-    // This includes login errors and network errors (laptop was off)
-    if (error.message && (error.message.includes('Not logged in') || error.message.includes('Failed to fetch'))) {
-      await chrome.storage.local.set({ lastLoginError: new Date().toISOString() });
-      console.log('💾 Error recorded - will auto-retry when connection is restored');
-    }
+    // Check if this is a login error
+    const isLoginError = error.message && error.message.includes('Not logged in');
     
-    // Send error notification to Slack
-    try {
+    if (isLoginError) {
+      // Login required - trigger auto-login flow instead of sending Slack error
+      console.log('🔑 Login required - triggering auto-login flow...');
+      await chrome.storage.local.set({ lastLoginError: new Date().toISOString() });
+      
+      // Trigger auto-login (will show Chrome notification, not Slack error)
       const config = await getConfig();
-      if (config.slackWebhookUrl) {
-        await sendErrorNotification(config.slackWebhookUrl, error);
+      if (config.autoLogin && config.ibmUsername && config.ibmPassword) {
+        await attemptAutoLogin();
+      } else {
+        console.log('⚠️ Auto-login not configured - user needs to login manually');
       }
-    } catch (notificationError) {
-      console.error('Failed to send error notification:', notificationError);
+    } else {
+      // Other errors (network issues, etc.) - send to Slack with duplicate suppression
+      const errorKey = error.message || 'unknown_error';
+      const storage = await chrome.storage.local.get(['lastErrorNotified', 'lastErrorMessage']);
+      const lastErrorMessage = storage.lastErrorMessage;
+      const lastErrorTime = storage.lastErrorNotified ? new Date(storage.lastErrorNotified) : null;
+      const now = new Date();
+      
+      console.log(`Error check - Last error: "${lastErrorMessage}", Last time: ${lastErrorTime}, Current error: "${errorKey}"`);
+      
+      // Only send notification if:
+      // 1. First error ever (no lastErrorTime), OR
+      // 2. Different error message, OR
+      // 3. Same error but more than 1 hour has passed
+      const shouldNotify = !lastErrorTime ||
+                          lastErrorMessage !== errorKey ||
+                          (now - lastErrorTime) > 60 * 60 * 1000; // 1 hour
+      
+      console.log(`Should notify: ${shouldNotify}`);
+      
+      if (error.message && error.message.includes('Failed to fetch')) {
+        await chrome.storage.local.set({ lastLoginError: new Date().toISOString() });
+        console.log('💾 Network error recorded - will auto-retry when connection is restored');
+      }
+      
+      // Send error notification to Slack (but only once per hour for same error)
+      if (shouldNotify) {
+        try {
+          const config = await getConfig();
+          if (config.slackWebhookUrl) {
+            await sendErrorNotification(config.slackWebhookUrl, error);
+            // Record that we sent this notification
+            await chrome.storage.local.set({
+              lastErrorNotified: now.toISOString(),
+              lastErrorMessage: errorKey
+            });
+            console.log('📧 Error notification sent to Slack');
+          } else {
+            console.log('⚠️ No Slack webhook configured - cannot send error notification');
+          }
+        } catch (notificationError) {
+          console.error('Failed to send error notification:', notificationError);
+        }
+      } else {
+        console.log('⏭️ Skipping duplicate error notification (same error within 1 hour)');
+      }
     }
   }
 }
@@ -523,6 +565,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     });
     return true;
   }
+  
+  if (request.action === 'testAutoLogin') {
+    console.log('🧪 Manual auto-login test triggered from popup');
+    attemptAutoLogin().then(() => {
+      sendResponse({ success: true });
+    }).catch(error => {
+      sendResponse({ success: false, error: error.message });
+    });
+    return true;
+  }
 });
 
 // ============================================
@@ -565,7 +617,7 @@ async function setupWeeklyDashboardAlarm() {
     periodInMinutes: 7 * 24 * 60 // Repeat every 7 days
   });
   
-  console.log(`Next weekly dashboard scheduled for: ${nextMonday.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`);
+  console.log(`📅 Next weekly dashboard scheduled for: ${nextMonday.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`);
 }
 
 // Store daily defect snapshot for weekly dashboard
@@ -869,7 +921,7 @@ async function sendWeeklyDashboardNotification() {
     
     message += `🔗 VIEW FULL DASHBOARD\n`;
     message += `Click the extension icon and select "View Weekly Dashboard"\n`;
-    message += `Or open: ${dashboardUrl}\n\n`;
+    message += `Or copy and paste this URL in Chrome: ${dashboardUrl}\n\n`;
     message += `The dashboard includes:\n`;
     message += `✨ Interactive charts and graphs\n`;
     message += `📊 Detailed analytics\n`;
@@ -893,14 +945,14 @@ async function sendWeeklyDashboardNotification() {
     }
     
     console.log('✅ Weekly dashboard notification sent to Slack');
+    console.log('📊 Dashboard link included in Slack message - user can click to view');
     
-    // Open dashboard in new tab
-    chrome.tabs.create({ url: dashboardUrl });
+    // Don't auto-open dashboard - user will click link in Slack when they want to view it
     
   } catch (error) {
     console.error('❌ Error sending weekly dashboard notification:', error);
     
-    // Send error notification
+    // Send error notification to Slack
     try {
       const config = await getConfig();
       if (config.slackWebhookUrl) {
@@ -915,3 +967,435 @@ async function sendWeeklyDashboardNotification() {
 
 
 
+
+
+// ============================================
+// VPN DETECTION AND AUTO-LOGIN FUNCTIONALITY
+// ============================================
+
+// Set up VPN detection alarm
+async function setupVPNDetection() {
+  // Clear existing VPN check alarm
+  await chrome.alarms.clear('vpnCheck');
+  
+  // Create alarm to check VPN status every 30 seconds
+  chrome.alarms.create('vpnCheck', {
+    delayInMinutes: 0.5, // Start after 30 seconds
+    periodInMinutes: 0.5 // Check every 30 seconds
+  });
+  
+  console.log('VPN detection enabled - checking every 30 seconds');
+}
+
+// Check if VPN is connected by trying to reach IBM server
+async function checkVPNConnection() {
+  try {
+    const response = await fetch('https://libh-proxy1.fyre.ibm.com/buildBreakReport/', {
+      method: 'HEAD',
+      cache: 'no-cache',
+      signal: AbortSignal.timeout(5000) // 5 second timeout
+    });
+    
+    // If we can reach the server, VPN is connected
+    return response.status !== 0;
+  } catch (error) {
+    // If fetch fails, VPN is likely not connected
+    return false;
+  }
+}
+
+// Handle VPN status change
+async function handleVPNStatusChange(isConnected) {
+  const config = await getConfig();
+  
+  // Store VPN status
+  await chrome.storage.local.set({ vpnConnected: isConnected });
+  
+  if (isConnected) {
+    console.log('✓ VPN Connected - Checking login status...');
+    
+    // Clear error notification history when VPN reconnects
+    // This allows a fresh error notification if the issue persists
+    await chrome.storage.local.remove(['lastErrorNotified', 'lastErrorMessage']);
+    console.log('🔄 Cleared error notification history - fresh notifications enabled');
+    
+    // If auto-login is enabled, attempt to login
+    if (config.autoLogin && config.ibmUsername && config.ibmPassword) {
+      await attemptAutoLogin();
+    }
+  } else {
+    console.log('✗ VPN Disconnected');
+  }
+}
+
+// Check VPN status periodically
+async function checkVPNStatus() {
+  try {
+    const isConnected = await checkVPNConnection();
+    const storage = await chrome.storage.local.get(['vpnConnected']);
+    const wasConnected = storage.vpnConnected || false;
+    
+    // Only trigger if status changed
+    if (isConnected !== wasConnected) {
+      await handleVPNStatusChange(isConnected);
+    }
+  } catch (error) {
+    console.error('Error checking VPN status:', error);
+  }
+}
+
+// Attempt automatic login to IBM w3id
+async function attemptAutoLogin() {
+  try {
+    console.log('🔐 Attempting automatic login...');
+    
+    const config = await getConfig();
+    
+    if (!config.ibmUsername || !config.ibmPassword) {
+      console.log('⚠️ IBM credentials not configured');
+      return;
+    }
+    
+    // Check if already logged in
+    let alreadyLoggedIn = false;
+    try {
+      const testResponse = await fetch('https://libh-proxy1.fyre.ibm.com/buildBreakReport/rest2/defects/buildbreak/fas?fas=Messaging', {
+        credentials: 'include',
+        headers: { 'Accept': 'application/json' }
+      });
+      
+      const contentType = testResponse.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        alreadyLoggedIn = true;
+        console.log('✓ Already logged in to IBM system');
+      }
+    } catch (error) {
+      console.log('Could not check login status, will open login page:', error.message);
+    }
+    
+    // If already logged in, just notify user
+    if (alreadyLoggedIn) {
+      console.log('✓ You are already logged in. No need to authenticate again.');
+      return;
+    }
+    
+    // Not logged in, need to authenticate
+    console.log('🔑 Not logged in, opening login page...');
+    
+    // Open the IBM page in a new tab in the BACKGROUND first
+    // If it auto-logs in, user won't see it. If manual login needed, we'll show it.
+    const tab = await chrome.tabs.create({
+      url: 'https://libh-proxy1.fyre.ibm.com/buildBreakReport/',
+      active: false // Open in background initially
+    });
+    
+    // Store the tab and window IDs for notification click handler
+    await chrome.storage.local.set({
+      loginTabId: tab.id,
+      loginWindowId: tab.windowId,
+      loginTabNeedsAttention: false // Will be set to true if manual login needed
+    });
+    
+    console.log(`✓ Login page opened in background tab ${tab.id}`);
+    console.log('   Waiting to see if manual login is required...');
+    
+    // Still monitor for successful login, but don't try to automate the click
+    await handleW3IDAuthentication(tab.id, config.ibmUsername, config.ibmPassword);
+    
+  } catch (error) {
+    console.error('❌ Auto-login error:', error);
+  }
+}
+
+// Handle w3id authentication flow
+async function handleW3IDAuthentication(tabId, username, password) {
+  return new Promise((resolve, reject) => {
+    let authAttempted = false;
+    
+    // Listen for tab updates
+    const listener = async (updatedTabId, changeInfo, tab) => {
+      if (updatedTabId !== tabId) return;
+      
+      // Check if we're on the w3id login page
+      if (changeInfo.status === 'complete' && tab.url) {
+        console.log('Tab loaded:', tab.url);
+        
+        // If we're on the w3id authentication page - manual login needed
+        if (tab.url.includes('login.w3.ibm.com') || tab.url.includes('w3id')) {
+          if (!authAttempted) {
+            authAttempted = true;
+            console.log('🔐 Detected w3id login page - manual login required');
+            
+            // Show notification and bring tab to foreground since manual login is needed
+            chrome.notifications.create('ibm-login-alert', {
+              type: 'basic',
+              iconUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+              title: '🔐 IBM Login Required',
+              message: 'Please switch to Chrome and click "Sign in" in the passkey dialog.',
+              priority: 2,
+              requireInteraction: true,
+              silent: false
+            }, (notificationId) => {
+              if (chrome.runtime.lastError) {
+                console.log('⚠️ Notification error:', chrome.runtime.lastError.message);
+              } else {
+                console.log('✓ Notification created - manual login needed');
+              }
+            });
+            
+            // Bring tab to foreground and focus window
+            try {
+              await chrome.tabs.update(tabId, { active: true });
+              const tabInfo = await chrome.tabs.get(tabId);
+              await chrome.windows.update(tabInfo.windowId, {
+                focused: true,
+                drawAttention: true,
+                state: 'normal'
+              });
+              console.log('✓ Tab brought to foreground for manual login');
+            } catch (error) {
+              console.log('⚠️ Could not bring tab to foreground:', error.message);
+            }
+            
+            // Inject script to fill in credentials and submit
+            try {
+              await chrome.scripting.executeScript({
+                target: { tabId: tabId },
+                func: fillW3IDCredentials,
+                args: [username, password]
+              });
+              
+              console.log('✓ Credentials filled, waiting for authentication...');
+            } catch (error) {
+              console.error('Error injecting script:', error);
+              chrome.tabs.onUpdated.removeListener(listener);
+              reject(error);
+            }
+          }
+        }
+        
+        // If we successfully reached the build break report page without needing login
+        if (tab.url.includes('libh-proxy1.fyre.ibm.com/buildBreakReport') &&
+            !tab.url.includes('login')) {
+          
+          if (!authAttempted) {
+            // Auto-logged in! Close the tab silently
+            console.log('✓ Auto-logged in successfully (already authenticated in browser)');
+            chrome.tabs.onUpdated.removeListener(listener);
+            setTimeout(() => {
+              chrome.tabs.remove(tabId);
+            }, 1000);
+            resolve();
+          } else {
+            // Logged in after manual authentication
+            console.log('✓ Successfully logged in to IBM system after manual authentication!');
+            chrome.tabs.onUpdated.removeListener(listener);
+            setTimeout(() => {
+              chrome.tabs.remove(tabId);
+            }, 2000);
+            resolve();
+          }
+        }
+      }
+    };
+    
+    chrome.tabs.onUpdated.addListener(listener);
+    
+    // Timeout after 60 seconds
+    setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(listener);
+      console.log('⚠️ Auto-login timeout - please login manually');
+      resolve(); // Don't reject, just resolve
+    }, 60000);
+  });
+}
+
+// Function to be injected into the w3id login page
+function fillW3IDCredentials(username, password) {
+  console.log('Filling w3id credentials...');
+  
+  // Check if we're on the sign-in method selection page
+  const checkForSignInMethodPage = () => {
+    const pageText = document.body.innerText;
+    
+    // Check if this is the "Choose a Single-Sign On method" page
+    if (pageText.includes('Choose a Single-Sign On method') ||
+        pageText.includes('Sign in with w3id')) {
+      console.log('✓ Detected sign-in method selection page');
+      console.log('Looking for Passkey option...');
+      
+      // Strategy 1: Look for clickable elements with arrow icon (→)
+      const allClickable = Array.from(document.querySelectorAll('a, button, [role="button"], div[onclick], div[class*="click"]'));
+      console.log(`Found ${allClickable.length} potentially clickable elements`);
+      
+      allClickable.forEach((el, idx) => {
+        const text = el.textContent.trim().substring(0, 50);
+        console.log(`Element ${idx}: tag=${el.tagName}, text="${text}"`);
+      });
+      
+      // Find element containing "Passkey"
+      const passkeyElement = allClickable.find(el => {
+        const text = el.textContent;
+        return text.includes('Passkey') || text.includes('passkey');
+      });
+      
+      if (passkeyElement) {
+        console.log('✓ Found Passkey element, clicking...');
+        console.log(`  Tag: ${passkeyElement.tagName}, Text: ${passkeyElement.textContent.substring(0, 100)}`);
+        passkeyElement.click();
+        
+        // Also try triggering mouse events
+        const clickEvent = new MouseEvent('click', {
+          bubbles: true,
+          cancelable: true,
+          view: window
+        });
+        passkeyElement.dispatchEvent(clickEvent);
+        
+        return true;
+      }
+      
+      // Strategy 2: Look for the first option (Passkey is usually first)
+      const firstOption = document.querySelector('div[class*="option"], li[class*="option"], a[class*="method"]');
+      if (firstOption && firstOption.textContent.toLowerCase().includes('passkey')) {
+        console.log('✓ Found Passkey as first option, clicking...');
+        firstOption.click();
+        return true;
+      }
+      
+      console.log('⚠️ Could not find Passkey option to click');
+      console.log('Page HTML structure:', document.body.innerHTML.substring(0, 500));
+    }
+    
+    // Check if we're on the passkey dialog page (after clicking Passkey option)
+    if (pageText.includes('Sign-in with Your Passkey') ||
+        pageText.includes('Sign in with a passkey') ||
+        pageText.includes('w3id on IBM Verify')) {
+      console.log('✓ Detected passkey authentication dialog');
+      console.log('⚠️ User needs to manually click "Sign in" button in the passkey dialog');
+      // Don't try to automate this - let user click manually
+      return false;
+    }
+    
+    return false;
+  };
+  
+  // Wait for page to be fully loaded
+  const fillCredentials = () => {
+    // First check if we're on the sign-in method selection page
+    if (checkForSignInMethodPage()) {
+      console.log('Clicked on Passkey option, waiting for passkey dialog...');
+      setTimeout(fillCredentials, 2000);
+      return true;
+    }
+    
+    // Try to find username field
+    const usernameField = document.querySelector('input[type="email"]') ||
+                         document.querySelector('input[name="username"]') ||
+                         document.querySelector('input[id*="username"]') ||
+                         document.querySelector('input[placeholder*="email"]');
+    
+    // Try to find password field
+    const passwordField = document.querySelector('input[type="password"]');
+    
+    if (usernameField && passwordField) {
+      console.log('Found credential fields, filling...');
+      
+      // Fill username
+      usernameField.value = username;
+      usernameField.dispatchEvent(new Event('input', { bubbles: true }));
+      usernameField.dispatchEvent(new Event('change', { bubbles: true }));
+      
+      // Fill password
+      passwordField.value = password;
+      passwordField.dispatchEvent(new Event('input', { bubbles: true }));
+      passwordField.dispatchEvent(new Event('change', { bubbles: true }));
+      
+      console.log('Credentials filled, looking for submit button...');
+      
+      // Find and click submit button
+      setTimeout(() => {
+        const submitButton = document.querySelector('button[type="submit"]') ||
+                           document.querySelector('input[type="submit"]') ||
+                           document.querySelector('button[id*="submit"]') ||
+                           document.querySelector('button[id*="login"]') ||
+                           document.querySelector('button[class*="submit"]');
+        
+        if (submitButton) {
+          console.log('Clicking submit button...');
+          submitButton.click();
+        } else {
+          console.log('Submit button not found, trying form submit...');
+          const form = document.querySelector('form');
+          if (form) {
+            form.submit();
+          }
+        }
+      }, 500);
+      
+      return true;
+    } else {
+      console.log('Credential fields not found yet, retrying...');
+      return false;
+    }
+  };
+  
+  // Try immediately
+  if (!fillCredentials()) {
+    // If not found, wait and try again
+    setTimeout(fillCredentials, 1000);
+    setTimeout(fillCredentials, 2000);
+    setTimeout(fillCredentials, 3000);
+    setTimeout(fillCredentials, 4000);
+  }
+}
+
+// Update alarm handler to include VPN check
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name === 'dailyDefectCheck') {
+    console.log('Daily defect check triggered');
+    await checkDefects();
+  } else if (alarm.name === 'keepSessionAlive') {
+    console.log('Session keepalive triggered');
+    await keepSessionAlive();
+  } else if (alarm.name === 'autoRetryCheck') {
+    await checkForAutoRetry();
+  } else if (alarm.name === 'weeklyDashboard') {
+    console.log('Weekly dashboard triggered');
+    await sendWeeklyDashboardNotification();
+  } else if (alarm.name === 'vpnCheck') {
+    await checkVPNStatus();
+  }
+});
+
+// Handle notification clicks - bring Chrome window to foreground
+chrome.notifications.onClicked.addListener(async (notificationId) => {
+  if (notificationId === 'ibm-login-alert') {
+    console.log('Notification clicked, focusing Chrome window...');
+    
+    // Get the stored tab and window IDs
+    const storage = await chrome.storage.local.get(['loginTabId', 'loginWindowId']);
+    
+    if (storage.loginWindowId && storage.loginTabId) {
+      try {
+        // Focus the window
+        await chrome.windows.update(storage.loginWindowId, {
+          focused: true,
+          state: 'normal'
+        });
+        
+        // Activate the tab
+        await chrome.tabs.update(storage.loginTabId, {
+          active: true
+        });
+        
+        console.log('✓ Chrome window and tab focused');
+      } catch (error) {
+        console.log('⚠️ Could not focus window:', error.message);
+      }
+    }
+    
+    // Clear the notification
+    chrome.notifications.clear(notificationId);
+  }
+});

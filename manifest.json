@@ -6,11 +6,17 @@
   "permissions": [
     "alarms",
     "storage",
-    "notifications"
+    "notifications",
+    "tabs",
+    "webRequest",
+    "webNavigation",
+    "scripting"
   ],
   "host_permissions": [
     "https://libh-proxy1.fyre.ibm.com/*",
-    "https://hooks.slack.com/*"
+    "https://hooks.slack.com/*",
+    "https://login.w3.ibm.com/*",
+    "https://*.w3.ibm.com/*"
   ],
   "background": {
     "service_worker": "background.js"

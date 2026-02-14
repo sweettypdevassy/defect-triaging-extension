@@ -2,8 +2,23 @@
 
 A Chrome extension that automatically monitors IBM Liberty Build Break Report for untriaged defects and sends daily Slack notifications.
 
+## 🆕 New in v2.1.0: Automatic VPN Login
+
+The extension now automatically detects when you connect to IBM VPN and logs you into the Build Break Report system using your w3id credentials!
+
+**Key Features:**
+- 🔐 **Auto-Login**: Automatically authenticates when VPN is connected
+- 🔍 **VPN Detection**: Checks VPN status every 30 seconds
+- 🔒 **Secure Storage**: Credentials stored securely in Chrome
+- 🔄 **Session Management**: Maintains login throughout the day
+
+**[📖 Read the Complete Auto-Login Guide](AUTO_LOGIN_GUIDE.md)** for detailed setup and usage instructions.
+
+---
+
 ## 🎯 Features
 
+- ✅ **Automatic VPN Login**: Auto-detects VPN and logs you in (NEW!)
 - ✅ **Daily Automated Checks**: Runs at 10:00 AM IST (configurable)
 - ✅ **Slack Notifications**: Sends grouped notifications by component
 - ✅ **Multi-Component Support**: Monitor multiple components simultaneously
@@ -38,12 +53,26 @@ Clone or download this repository to your local machine.
 1. Click the extension icon in Chrome toolbar
 2. Click "Settings" button
 3. Enter configuration:
+   - **IBM w3id Username**: Your IBM email address (for auto-login)
+   - **IBM w3id Password**: Your w3id password (stored securely)
+   - **Enable automatic login**: Keep checked for auto-login feature
    - **Slack Webhook URL**: Your Slack incoming webhook URL
    - **Component Names**: Comma-separated list (e.g., `Messaging, Database, Security`)
    - **Check Time**: Time for daily checks (default: 10:00 AM)
 4. Click "Save Settings"
 
-### Step 4: Login to IBM
+### Step 4: Connect to VPN
+
+1. Connect to IBM VPN using your VPN client
+2. Extension will automatically detect VPN connection (within 30 seconds)
+3. Extension will automatically login to IBM Build Break Report
+4. Check browser console for confirmation: "✓ Successfully logged in to IBM system!"
+
+**Note**: If you prefer manual login, uncheck "Enable automatic login" in settings and follow the manual login process below.
+
+### Manual Login (Optional)
+
+If auto-login is disabled or you prefer manual login:
 
 1. Open https://libh-proxy1.fyre.ibm.com/buildBreakReport/
 2. Login with your IBM W3 ID credentials

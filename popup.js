@@ -5,6 +5,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   
   // Set up event listeners
   document.getElementById('checkNowBtn').addEventListener('click', checkNow);
+  document.getElementById('testLoginBtn').addEventListener('click', testAutoLogin);
   document.getElementById('dashboardBtn').addEventListener('click', openDashboard);
   document.getElementById('optionsBtn').addEventListener('click', openOptions);
 });
@@ -73,6 +74,52 @@ async function checkNow() {
   } finally {
     button.disabled = false;
     button.textContent = 'Check Now';
+  }
+}
+
+// Test auto-login functionality
+async function testAutoLogin() {
+  const button = document.getElementById('testLoginBtn');
+  button.disabled = true;
+  button.textContent = '🔐 Testing...';
+  
+  try {
+    // Check if credentials are configured
+    const config = await chrome.storage.sync.get({
+      ibmUsername: '',
+      ibmPassword: '',
+      autoLogin: true
+    });
+    
+    if (!config.ibmUsername || !config.ibmPassword) {
+      showMessage('⚠️ Please configure IBM credentials in Settings first!', 'error');
+      button.disabled = false;
+      button.textContent = '🔐 Test Auto-Login';
+      return;
+    }
+    
+    if (!config.autoLogin) {
+      showMessage('⚠️ Auto-login is disabled. Enable it in Settings.', 'error');
+      button.disabled = false;
+      button.textContent = '🔐 Test Auto-Login';
+      return;
+    }
+    
+    showMessage('🔍 Checking VPN connection...', 'success');
+    
+    // Trigger auto-login test
+    const response = await chrome.runtime.sendMessage({ action: 'testAutoLogin' });
+    
+    if (response.success) {
+      showMessage('✓ Auto-login test successful! Check console for details.', 'success');
+    } else {
+      showMessage('✗ Auto-login test failed: ' + response.error, 'error');
+    }
+  } catch (error) {
+    showMessage('✗ Error: ' + error.message, 'error');
+  } finally {
+    button.disabled = false;
+    button.textContent = '🔐 Test Auto-Login';
   }
 }
 

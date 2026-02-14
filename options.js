@@ -12,12 +12,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function loadSettings() {
   try {
     const config = await chrome.storage.sync.get({
+      ibmUsername: '',
+      ibmPassword: '',
+      autoLogin: true,
       slackWebhookUrl: '',
       componentName: 'Messaging',
       checkTime: '10:00',
       enabled: true
     });
     
+    document.getElementById('ibmUsername').value = config.ibmUsername;
+    document.getElementById('ibmPassword').value = config.ibmPassword;
+    document.getElementById('autoLogin').checked = config.autoLogin;
     document.getElementById('slackWebhookUrl').value = config.slackWebhookUrl;
     document.getElementById('componentName').value = config.componentName;
     document.getElementById('checkTime').value = config.checkTime;
@@ -34,6 +40,9 @@ async function saveSettings(e) {
   
   try {
     const config = {
+      ibmUsername: document.getElementById('ibmUsername').value.trim(),
+      ibmPassword: document.getElementById('ibmPassword').value.trim(),
+      autoLogin: document.getElementById('autoLogin').checked,
       slackWebhookUrl: document.getElementById('slackWebhookUrl').value.trim(),
       componentName: document.getElementById('componentName').value.trim(),
       checkTime: document.getElementById('checkTime').value,
@@ -41,6 +50,16 @@ async function saveSettings(e) {
     };
     
     // Validate
+    if (!config.ibmUsername) {
+      showMessage('Please enter your IBM w3id username', 'error');
+      return;
+    }
+    
+    if (!config.ibmPassword) {
+      showMessage('Please enter your IBM w3id password', 'error');
+      return;
+    }
+    
     if (!config.slackWebhookUrl) {
       showMessage('Please enter a Slack webhook URL', 'error');
       return;
