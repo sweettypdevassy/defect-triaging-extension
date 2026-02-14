@@ -1,178 +1,320 @@
-# 🔔 Defect Triaging Notifier - Chrome Extension
+# Defect Triaging Chrome Extension
 
-Automated Slack notifications for untriaged defects from IBM Liberty Build Break Report.
+A Chrome extension that automatically monitors IBM Liberty Build Break Report for untriaged defects and sends daily Slack notifications.
 
-## Overview
+## 🎯 Features
 
-This Chrome extension automatically checks for untriaged defects daily and sends notifications to your Slack channel. It runs in your browser using your existing IBM login session, eliminating authentication issues.
+- ✅ **Daily Automated Checks**: Runs at 10:00 AM IST (configurable)
+- ✅ **Slack Notifications**: Sends grouped notifications by component
+- ✅ **Multi-Component Support**: Monitor multiple components simultaneously
+- ✅ **Weekly Dashboard**: Analytics dashboard with charts and trends (Monday 11 AM)
+- ✅ **Session Keepalive**: Maintains IBM session to reduce login frequency
+- ✅ **Auto-Retry**: Automatically retries when you login after session expires
+- ✅ **Manual Triggers**: "Check Now" and "Test Now" buttons for immediate checks
 
-## Features
+## 📋 Prerequisites
 
-- ✅ **Automatic Daily Checks** - Runs at 10:00 AM IST (configurable)
-- ✅ **Slack Integration** - Sends formatted notifications to your channel
-- ✅ **Browser-Based** - Uses your existing IBM login session
-- ✅ **Session Keepalive** - Automatically keeps IBM session active 24/7 (every 2 hours)
-- ✅ **Fast Auto-Retry** - Checks for login every minute and auto-retries within 1 minute
-- ✅ **No Daily Login** - Session stays alive automatically, no manual login needed
-- ✅ **Manual Trigger** - Check defects anytime with one click
-- ✅ **Configurable** - Set component, time, and webhook URL
-- ✅ **No Authentication Issues** - Works with IBM SSO seamlessly
+- Google Chrome browser
+- IBM W3 ID account with access to Build Break Report
+- Slack workspace with webhook URL
+- Active IBM session (login required)
 
-## Quick Start
+## 🚀 Installation
 
-1. **Install the Extension**
-   - Open Chrome and go to `chrome://extensions/`
-   - Enable "Developer mode"
-   - Click "Load unpacked"
-   - Select the `defect-triaging-extension` folder
+### Step 1: Download Extension
 
-2. **Configure Settings**
-   - Click the extension icon in the toolbar
-   - Click "Settings"
-   - Enter your Slack webhook URL
-   - Set component name (e.g., "Messaging")
-   - Set check time (default: 10:00 AM IST)
-   - Click "Save Settings"
+Clone or download this repository to your local machine.
 
-3. **Test It**
-   - Make sure you're logged in to IBM Build Break Report
-   - Click "Test Now" in settings
-   - Check your Slack channel for notification
+### Step 2: Install in Chrome
 
-## Files
+1. Open Chrome and navigate to `chrome://extensions/`
+2. Enable "Developer mode" (toggle in top right)
+3. Click "Load unpacked"
+4. Select the `defect-triaging-extension` folder
+5. Extension icon will appear in Chrome toolbar
+
+### Step 3: Configure Extension
+
+1. Click the extension icon in Chrome toolbar
+2. Click "Settings" button
+3. Enter configuration:
+   - **Slack Webhook URL**: Your Slack incoming webhook URL
+   - **Component Names**: Comma-separated list (e.g., `Messaging, Database, Security`)
+   - **Check Time**: Time for daily checks (default: 10:00 AM)
+4. Click "Save Settings"
+
+### Step 4: Login to IBM
+
+1. Open https://libh-proxy1.fyre.ibm.com/buildBreakReport/
+2. Login with your IBM W3 ID credentials
+3. Complete MFA (IBM Verify, SMS, or passkey)
+4. Keep this tab open or Chrome running
+
+### Step 5: Test
+
+1. Click extension icon
+2. Click "Check Now" button
+3. Verify Slack notification received
+4. Check console logs for any errors
+
+## 📱 Usage
+
+### Daily Automatic Checks
+
+- Extension runs automatically at configured time (default 10:00 AM IST)
+- Checks all configured components
+- Sends Slack notification with untriaged defects
+- Stores daily snapshot for weekly dashboard
+
+### Manual Checks
+
+- Click extension icon → "Check Now" for immediate check
+- Go to Settings → "Test Now" to test configuration
+
+### Weekly Dashboard
+
+- Automatically generated every Monday at 11:00 AM IST
+- Shows 7-day trends, charts, and analytics
+- Click "📊 View Weekly Dashboard" button to open anytime
+- Sent to Slack with summary
+
+## 🔧 Configuration Options
+
+### Slack Webhook URL
+
+Get your webhook URL from Slack:
+1. Go to https://api.slack.com/apps
+2. Create new app or select existing
+3. Enable "Incoming Webhooks"
+4. Create webhook for your channel
+5. Copy webhook URL
+
+### Component Names
+
+Enter comma-separated component names:
+```
+Messaging, Database, Security, Batch
+```
+
+### Check Time
+
+24-hour format (HH:MM):
+```
+10:00  → 10:00 AM
+14:30  → 2:30 PM
+```
+
+## 📊 Dashboard Features
+
+### Summary Cards
+- Total defects this week
+- Average daily defects
+- Current untriaged count
+- Week-over-week change
+
+### Charts
+- Daily defect trend (line chart)
+- Triage status breakdown (pie chart)
+- Component breakdown (bar chart)
+- Week-over-week comparison (grouped bar chart)
+
+### Priority Items
+- Top 5 components by defect count
+- Status and trend indicators
+
+## 🔐 Session Management
+
+### Session Keepalive
+
+Extension automatically:
+- Sends request to IBM every 2 hours
+- Refreshes session cookies
+- Reduces login frequency
+
+### Auto-Retry
+
+If session expires:
+- Extension detects "Not logged in" error
+- Sends Slack notification
+- Automatically retries when you login again
+- No manual intervention needed
+
+### Login Requirements
+
+- **Initial**: Login once when you start using extension
+- **Ongoing**: Login when session expires (typically daily if laptop shuts down)
+- **Best Practice**: Keep Chrome running to maintain session
+
+## 📁 Project Structure
 
 ```
 defect-triaging-extension/
-├── manifest.json          # Extension configuration
-├── background.js          # Background service worker
+├── manifest.json           # Extension configuration
+├── background.js          # Main extension logic
 ├── popup.html            # Extension popup UI
 ├── popup.js              # Popup functionality
-├── options.html          # Settings page UI
+├── options.html          # Settings page
 ├── options.js            # Settings functionality
-├── INSTALLATION.md       # Detailed installation guide
+├── dashboard.html        # Weekly dashboard template
+├── dashboard.js          # Dashboard rendering logic
+├── chart.min.js          # Chart.js library (local)
+├── icon16.png           # Extension icon (16x16)
+├── icon48.png           # Extension icon (48x48)
+├── icon128.png          # Extension icon (128x128)
 └── README.md            # This file
 ```
 
-## Configuration
+## 📚 Documentation
 
-### Slack Webhook URL
-Get your webhook URL from Slack:
-- Your webhook should accept JSON: `{"message": "text"}`
-- Example: `https://hooks.slack.com/triggers/E27SFGS2W/...`
+- **INSTALLATION.md**: Detailed installation guide
+- **TESTING_GUIDE.md**: Testing and troubleshooting
+- **WEEKLY_DASHBOARD_GUIDE.md**: Dashboard features and usage
+- **DASHBOARD_DATA_GUIDE.md**: Understanding dashboard metrics
+- **DATA_COLLECTION_TIMING.md**: When and how data is collected
+- **DUPLICATE_FIX.md**: Fixing duplicate notification issues
+- **CHANGELOG.md**: Version history and updates
 
-### Component Name
-- Must match exactly as shown in IBM Build Break Report
-- Examples: "Messaging", "Batch", "CDI", "Core Security"
+## 🆘 Troubleshooting
 
-### Check Time
-- Format: HH:MM (24-hour)
-- Timezone: IST (India Standard Time)
-- Default: 10:00 (10:00 AM IST)
+### "Not logged in" Error
 
-## How It Works
+**Problem**: Extension can't access IBM system
 
-1. **Session Keepalive**
-   - Extension automatically refreshes IBM session every 2 hours
-   - Runs 24/7 to prevent session expiry
-   - No manual login needed - session stays alive automatically
+**Solution**:
+1. Open https://libh-proxy1.fyre.ibm.com/buildBreakReport/
+2. Login with IBM W3 ID
+3. Complete MFA
+4. Extension will auto-retry
 
-2. **Auto-Retry Check**
-   - Checks every 1 minute for login status (no API calls)
-   - Auto-retries defect check within 1 minute after login
-   - Minimal resource usage
+### No Slack Notifications
 
-3. **Scheduled Check**
-   - Extension sets up a daily alarm at configured time
-   - When alarm triggers, it calls the IBM API
+**Problem**: Not receiving notifications
 
-4. **Fetch Defects**
-   - Makes GET request to IBM Build Break Report API
-   - Uses browser's existing cookies (your login session)
-   - Parses the JSON response
+**Solution**:
+1. Check Slack webhook URL is correct
+2. Test with "Test Now" button
+3. Check console logs for errors
+4. Verify Slack webhook is active
 
-5. **Send Notification**
-   - Formats defect information
-   - Sends to Slack webhook
-   - Shows browser notification
+### Duplicate Notifications
 
-6. **Repeat Daily**
-   - Automatically repeats every 24 hours
-   - No manual intervention needed
+**Problem**: Receiving multiple notifications
 
-## API Endpoint
+**Solution**:
+1. Check only one instance of extension is installed
+2. Reload extension: chrome://extensions/ → reload icon
+3. See DUPLICATE_FIX.md for details
 
-The extension uses the IBM Build Break Report API to fetch defect information for configured components.
+### Dashboard Not Loading
 
-## Slack Notification Format
+**Problem**: Dashboard shows no data
 
-The extension sends formatted notifications to Slack with defect details including ID, summary, builds reported, state, and owner information. Notifications are grouped by component when monitoring multiple components.
+**Solution**:
+1. Wait for daily checks to collect data (need 1-7 days)
+2. Check console logs for errors
+3. Verify extension is running daily checks
+4. See TESTING_GUIDE.md for debugging
 
-## Troubleshooting
+## 🔄 Updates
 
-### Not Logged In Error
-- The extension now includes automatic session keepalive
-- Refreshes your IBM session every hour during work hours (9 AM - 6 PM IST)
-- If you still see this error:
-  - Open https://libh-proxy1.fyre.ibm.com/buildBreakReport/
-  - Log in with your IBM credentials
-  - The extension will keep the session alive automatically
+### Updating Extension
 
-### No Slack Notification
-- Verify webhook URL is correct
-- Test webhook manually with curl
-- Check Slack webhook is still active
+1. Download latest version
+2. Go to chrome://extensions/
+3. Click reload icon on extension
+4. Settings are preserved
 
-### Extension Not Running
-- Chrome must be running at scheduled time
-- Check extension is enabled in `chrome://extensions/`
-- Check "Last Check" time in extension popup
+### Version History
 
-## Development
+See CHANGELOG.md for detailed version history.
 
-### Testing Changes
-1. Make changes to files
-2. Go to `chrome://extensions/`
-3. Click refresh icon on the extension
-4. Test with "Check Now" button
+## ⚙️ Advanced Configuration
 
-### Debugging
-- Open `chrome://extensions/`
-- Click "Details" on the extension
-- Click "Inspect views: background page"
-- Check console for errors
+### Custom Check Schedule
 
-## Requirements
+Edit check time in settings to run at different times:
+- Morning: 09:00
+- Afternoon: 14:00
+- Evening: 18:00
 
-- Google Chrome or Microsoft Edge (Chromium-based)
-- Access to IBM Liberty Build Break Report
-- Slack webhook URL
-- Chrome must be running for scheduled checks
+### Multiple Components
 
-## Limitations
+Monitor multiple components by separating with commas:
+```
+Messaging, Database, Security, Batch, CDI, MCP
+```
 
-- Chrome must be running at scheduled time
-- Requires initial IBM login (then kept alive automatically)
-- Maximum 10 defects shown per component in notification (to avoid message size limits)
+### Dashboard Schedule
 
-## Security
+Weekly dashboard runs every Monday at 11:00 AM IST (not configurable).
 
-- Extension only accesses IBM and Slack domains
-- No data is stored externally
-- Webhook URL stored in Chrome's sync storage
-- Uses browser's existing authentication
+## 🔒 Security & Privacy
 
-## License
+- Extension uses browser's existing IBM session
+- No credentials stored
+- Slack webhook URL stored locally in Chrome
+- All data stored locally in Chrome storage
+- No external servers (except IBM and Slack)
 
-MIT
+## 📝 Notes
 
-## Support
+### Session Expiration
+
+- IBM sessions typically expire after 8-24 hours of inactivity
+- If laptop shuts down, session will expire
+- Need to login again next morning
+- Session keepalive helps but doesn't prevent all expirations
+
+### Best Practices
+
+1. **Keep Chrome Running**: Helps maintain session
+2. **Login Before 10 AM**: Ensures daily check works
+3. **Check Slack Daily**: Monitor for login errors
+4. **Update Regularly**: Get latest fixes and features
+
+### Limitations
+
+- Requires active IBM session (cannot automate login/MFA)
+- Session expires when laptop shuts down
+- Need to be logged in for checks to work
+- Cannot run when Chrome is closed
+
+## 🎓 Tips
+
+1. **Bookmark IBM URL**: Quick access for login
+2. **Enable Slack Notifications**: Don't miss defect alerts
+3. **Review Dashboard Weekly**: Track team progress
+4. **Use "Check Now"**: Test after configuration changes
+5. **Check Console Logs**: Helpful for debugging
+
+## 📞 Support
 
 For issues or questions:
-1. Check INSTALLATION.md for detailed setup
-2. Review browser console for errors
-3. Verify IBM login is active
-4. Test webhook URL manually
+1. Check TESTING_GUIDE.md for troubleshooting
+2. Review console logs (chrome://extensions/ → service worker)
+3. Verify IBM session is active
+4. Test with "Check Now" button
+
+## 🚀 Future Enhancements
+
+Potential features for future versions:
+- Custom notification templates
+- Email notifications
+- Multiple Slack channels
+- Defect filtering rules
+- Historical data export
+- Mobile app integration
+
+## 📄 License
+
+Internal IBM tool - for authorized users only.
+
+## 🙏 Acknowledgments
+
+Built for IBM Liberty team to streamline defect triaging workflow.
 
 ---
 
-**Made with ❤️ for automated defect triaging**
+**Version**: 2.0.0  
+**Last Updated**: February 2026  
+**Maintained By**: Development Team

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Defect Triaging Notifier",
-  "version": "1.0.0",
-  "description": "Automated Slack notifications for untriaged defects from IBM Liberty Build Break Report",
+  "version": "2.0.0",
+  "description": "Automated Slack notifications for untriaged defects from IBM Liberty Build Break Report with Weekly Dashboard",
   "permissions": [
     "alarms",
     "storage",

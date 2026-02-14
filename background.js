@@ -24,6 +24,10 @@ chrome.runtime.onInstalled.addListener(async () => {
   
   // Set up session keepalive
   setupSessionKeepalive();
+  
+  // Set up weekly dashboard
+  console.log('Setting up weekly dashboard...');
+  await setupWeeklyDashboardAlarm();
 });
 
 // Get configuration from storage
@@ -140,6 +144,9 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   } else if (alarm.name === 'autoRetryCheck') {
     // Quick check for auto-retry (no API call unless needed)
     await checkForAutoRetry();
+  } else if (alarm.name === 'weeklyDashboard') {
+    console.log('Weekly dashboard triggered');
+    await sendWeeklyDashboardNotification();
   }
 });
 
@@ -331,6 +338,9 @@ async function checkDefects() {
     
     console.log(`Total: ${totalDefects} untriaged defects across all components`);
     
+    // Store daily snapshot for weekly dashboard
+    await storeDailySnapshot(componentDefectsMap, totalDefects);
+    
     // Send Slack notification grouped by component
     await sendSlackNotificationGrouped(config.slackWebhookUrl, componentDefectsMap, totalDefects);
     
@@ -497,5 +507,411 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     });
     return true;
   }
+  
+  if (request.action === 'openDashboard') {
+    const dashboardUrl = chrome.runtime.getURL('dashboard.html');
+    chrome.tabs.create({ url: dashboardUrl });
+    sendResponse({ success: true });
+    return true;
+  }
+  
+  if (request.action === 'generateDashboard') {
+    generateWeeklyDashboard().then(() => {
+      sendResponse({ success: true });
+    }).catch(error => {
+      sendResponse({ success: false, error: error.message });
+    });
+    return true;
+  }
 });
+
+// ============================================
+// WEEKLY DASHBOARD FUNCTIONALITY
+// ============================================
+
+// Set up weekly dashboard alarm for Monday 11 AM
+async function setupWeeklyDashboardAlarm() {
+  const config = await getConfig();
+  
+  if (!config.enabled) {
+    console.log('Automation is disabled - weekly dashboard also disabled');
+    return;
+  }
+  
+  // Clear existing weekly alarm
+  await chrome.alarms.clear('weeklyDashboard');
+  
+  // Calculate next Monday 11:00 AM IST
+  const now = new Date();
+  const nextMonday = new Date();
+  
+  // Set to 11:00 AM
+  nextMonday.setHours(11, 0, 0, 0);
+  
+  // Find next Monday
+  const daysUntilMonday = (8 - now.getDay()) % 7 || 7;
+  nextMonday.setDate(now.getDate() + daysUntilMonday);
+  
+  // If it's Monday and time has passed, schedule for next Monday
+  if (now.getDay() === 1 && now.getHours() >= 11) {
+    nextMonday.setDate(nextMonday.getDate() + 7);
+  }
+  
+  const delayInMinutes = (nextMonday - now) / (1000 * 60);
+  
+  // Create alarm for Monday 11 AM, repeat weekly
+  chrome.alarms.create('weeklyDashboard', {
+    delayInMinutes: delayInMinutes,
+    periodInMinutes: 7 * 24 * 60 // Repeat every 7 days
+  });
+  
+  console.log(`Next weekly dashboard scheduled for: ${nextMonday.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`);
+}
+
+// Store daily defect snapshot for weekly dashboard
+async function storeDailySnapshot(componentDefectsMap, totalDefects) {
+  try {
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+    
+    // Get existing snapshots
+    const result = await chrome.storage.local.get(['dailySnapshots']);
+    const snapshots = result.dailySnapshots || {};
+    
+    // Calculate breakdown by triage status
+    let untriaged = 0;
+    let testBugs = 0;
+    let productBugs = 0;
+    let infraBugs = 0;
+    
+    // Get all defects from all components
+    const config = await getConfig();
+    const componentNames = config.componentName
+      .split(',')
+      .map(name => name.trim())
+      .filter(name => name.length > 0);
+    
+    for (const componentName of componentNames) {
+      const apiUrl = `https://libh-proxy1.fyre.ibm.com/buildBreakReport/rest2/defects/buildbreak/fas?fas=${encodeURIComponent(componentName)}`;
+      
+      try {
+        const response = await fetch(apiUrl, {
+          credentials: 'include',
+          headers: { 'Accept': 'application/json' }
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          const allDefects = Array.isArray(data) ? data : (data.defects || []);
+          
+          allDefects.forEach(defect => {
+            const triageTags = (defect.triageTags || defect.tags || []);
+            const tagsArray = Array.isArray(triageTags) ? triageTags : [];
+            
+            // Check if defect has any triaged tag
+            const hasTriagedTag = tagsArray.some(tag => {
+              const lowerTag = tag.toLowerCase();
+              return lowerTag.includes('test_bug') ||
+                     lowerTag.includes('product_bug') ||
+                     lowerTag.includes('infrastructure_bug') ||
+                     lowerTag === 'test' ||
+                     lowerTag === 'product' ||
+                     lowerTag === 'infrastructure';
+            });
+            
+            if (!hasTriagedTag) {
+              // No triage tag = untriaged
+              untriaged++;
+            } else {
+              // Has triage tag - categorize it
+              const hasTestTag = tagsArray.some(tag => {
+                const lowerTag = tag.toLowerCase();
+                return lowerTag.includes('test_bug') || lowerTag === 'test';
+              });
+              const hasProductTag = tagsArray.some(tag => {
+                const lowerTag = tag.toLowerCase();
+                return lowerTag.includes('product_bug') || lowerTag === 'product';
+              });
+              const hasInfraTag = tagsArray.some(tag => {
+                const lowerTag = tag.toLowerCase();
+                return lowerTag.includes('infrastructure_bug') || lowerTag === 'infrastructure';
+              });
+              
+              if (hasTestTag) {
+                testBugs++;
+              } else if (hasProductTag) {
+                productBugs++;
+              } else if (hasInfraTag) {
+                infraBugs++;
+              }
+            }
+          });
+        }
+      } catch (error) {
+        console.error(`Error fetching defects for ${componentName}:`, error);
+      }
+    }
+    
+    // Store today's snapshot
+    snapshots[today] = {
+      date: today,
+      total: totalDefects + testBugs + productBugs + infraBugs,
+      untriaged: untriaged,
+      testBugs: testBugs,
+      productBugs: productBugs,
+      infraBugs: infraBugs,
+      componentBreakdown: componentDefectsMap.map(c => ({
+        name: c.componentName,
+        count: c.defects.length
+      }))
+    };
+    
+    // Keep only last 14 days of snapshots
+    const dates = Object.keys(snapshots).sort();
+    if (dates.length > 14) {
+      const toDelete = dates.slice(0, dates.length - 14);
+      toDelete.forEach(date => delete snapshots[date]);
+    }
+    
+    // Save snapshots
+    await chrome.storage.local.set({ dailySnapshots: snapshots });
+    console.log(`Daily snapshot stored for ${today}`);
+    
+  } catch (error) {
+    console.error('Error storing daily snapshot:', error);
+  }
+}
+
+// Generate weekly dashboard data
+async function generateWeeklyDashboard() {
+  try {
+    console.log('Generating weekly dashboard...');
+    
+    // Get last 7 days of snapshots
+    const result = await chrome.storage.local.get(['dailySnapshots']);
+    const snapshots = result.dailySnapshots || {};
+    
+    // Get dates for last 7 days
+    const dates = [];
+    for (let i = 6; i >= 0; i--) {
+      const date = new Date();
+      date.setDate(date.getDate() - i);
+      dates.push(date.toISOString().split('T')[0]);
+    }
+    
+    // Build daily trend data
+    const dailyTrend = {
+      labels: dates.map(d => {
+        const date = new Date(d);
+        return date.toLocaleDateString('en-US', { weekday: 'short' });
+      }),
+      total: dates.map(d => snapshots[d]?.total || 0),
+      untriaged: dates.map(d => snapshots[d]?.untriaged || 0)
+    };
+    
+    // Calculate this week's totals
+    const thisWeekData = dates.reduce((acc, date) => {
+      const snapshot = snapshots[date] || {};
+      return {
+        total: acc.total + (snapshot.total || 0),
+        untriaged: acc.untriaged + (snapshot.untriaged || 0),
+        testBugs: acc.testBugs + (snapshot.testBugs || 0),
+        productBugs: acc.productBugs + (snapshot.productBugs || 0),
+        infraBugs: acc.infraBugs + (snapshot.infraBugs || 0)
+      };
+    }, { total: 0, untriaged: 0, testBugs: 0, productBugs: 0, infraBugs: 0 });
+    
+    // Calculate last week's totals for comparison
+    const lastWeekDates = [];
+    for (let i = 13; i >= 7; i--) {
+      const date = new Date();
+      date.setDate(date.getDate() - i);
+      lastWeekDates.push(date.toISOString().split('T')[0]);
+    }
+    
+    const lastWeekData = lastWeekDates.reduce((acc, date) => {
+      const snapshot = snapshots[date] || {};
+      return {
+        total: acc.total + (snapshot.total || 0),
+        untriaged: acc.untriaged + (snapshot.untriaged || 0)
+      };
+    }, { total: 0, untriaged: 0 });
+    
+    // Calculate trend percentage
+    const trendPercentage = lastWeekData.total > 0
+      ? Math.round(((thisWeekData.total - lastWeekData.total) / lastWeekData.total) * 100)
+      : 0;
+    
+    // Get component breakdown from most recent snapshot
+    const latestDate = dates[dates.length - 1];
+    const latestSnapshot = snapshots[latestDate] || {};
+    const componentBreakdown = latestSnapshot.componentBreakdown || [];
+    
+    // Build component details
+    const componentDetails = componentBreakdown.map(comp => {
+      // Calculate totals for this component across the week
+      const weeklyData = dates.reduce((acc, date) => {
+        const snapshot = snapshots[date] || {};
+        const compData = (snapshot.componentBreakdown || []).find(c => c.name === comp.name);
+        return acc + (compData?.count || 0);
+      }, 0);
+      
+      return {
+        name: comp.name,
+        total: weeklyData,
+        untriaged: comp.count,
+        testBugs: 0, // Simplified for now
+        productBugs: 0,
+        infrastructure: 0
+      };
+    });
+    
+    // Build priority items
+    const priorityItems = [];
+    if (thisWeekData.untriaged > 10) {
+      priorityItems.push({
+        title: `High Untriaged Count`,
+        description: `${thisWeekData.untriaged} untriaged defects need attention`
+      });
+    }
+    if (trendPercentage > 20) {
+      priorityItems.push({
+        title: `Increasing Trend`,
+        description: `Defects increased by ${trendPercentage}% from last week`
+      });
+    }
+    
+    // Build dashboard data
+    const dashboardData = {
+      weekStart: dates[0],
+      weekEnd: dates[dates.length - 1],
+      generatedAt: new Date().toISOString(),
+      summary: {
+        totalDefects: thisWeekData.total,
+        untriaged: thisWeekData.untriaged,
+        testBugs: thisWeekData.testBugs,
+        productBugs: thisWeekData.productBugs,
+        infraBugs: thisWeekData.infraBugs,
+        trendPercentage: trendPercentage
+      },
+      dailyTrend: dailyTrend,
+      triageBreakdown: {
+        untriaged: thisWeekData.untriaged,
+        testBug: thisWeekData.testBugs,
+        productBug: thisWeekData.productBugs,
+        infrastructure: thisWeekData.infraBugs
+      },
+      componentBreakdown: {
+        labels: componentDetails.map(c => c.name),
+        total: componentDetails.map(c => c.total),
+        untriaged: componentDetails.map(c => c.untriaged)
+      },
+      weekComparison: {
+        lastWeek: lastWeekData,
+        thisWeek: thisWeekData
+      },
+      priorityItems: priorityItems,
+      componentDetails: componentDetails
+    };
+    
+    // Store dashboard data
+    await chrome.storage.local.set({ weeklyDashboardData: dashboardData });
+    console.log('Weekly dashboard data generated and stored');
+    
+    return dashboardData;
+    
+  } catch (error) {
+    console.error('Error generating weekly dashboard:', error);
+    throw error;
+  }
+}
+
+// Send weekly dashboard notification to Slack
+async function sendWeeklyDashboardNotification() {
+  try {
+    const config = await getConfig();
+    
+    if (!config.slackWebhookUrl) {
+      console.error('Slack webhook URL not configured');
+      return;
+    }
+    
+    // Generate dashboard
+    const dashboardData = await generateWeeklyDashboard();
+    
+    // Create dashboard URL (opens in Chrome tab)
+    const dashboardUrl = chrome.runtime.getURL('dashboard.html');
+    
+    // Build Slack message
+    const weekStart = new Date(dashboardData.weekStart).toLocaleDateString('en-IN');
+    const weekEnd = new Date(dashboardData.weekEnd).toLocaleDateString('en-IN');
+    const trendIcon = dashboardData.summary.trendPercentage < 0 ? '↘️' : '↗️';
+    const trendText = dashboardData.summary.trendPercentage < 0 ? 'Down' : 'Up';
+    
+    let message = `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    message += `📊 WEEKLY DEFECT DASHBOARD\n`;
+    message += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+    message += `Week of ${weekStart} to ${weekEnd}\n\n`;
+    message += `📈 Quick Summary:\n`;
+    message += `• ${dashboardData.summary.totalDefects} total defects\n`;
+    message += `• ${dashboardData.summary.untriaged} untriaged (${Math.round((dashboardData.summary.untriaged / dashboardData.summary.totalDefects) * 100)}%)\n`;
+    message += `• ${dashboardData.summary.testBugs} test bugs\n`;
+    message += `• ${dashboardData.summary.productBugs} product bugs\n`;
+    message += `• ${dashboardData.summary.infraBugs} infrastructure bugs\n`;
+    message += `• Trending: ${trendIcon} ${trendText} ${Math.abs(dashboardData.summary.trendPercentage)}% from last week\n\n`;
+    
+    if (dashboardData.priorityItems.length > 0) {
+      message += `🎯 Priority Items:\n`;
+      dashboardData.priorityItems.forEach(item => {
+        message += `• ${item.title}: ${item.description}\n`;
+      });
+      message += `\n`;
+    }
+    
+    message += `🔗 VIEW FULL DASHBOARD\n`;
+    message += `Click the extension icon and select "View Weekly Dashboard"\n`;
+    message += `Or open: ${dashboardUrl}\n\n`;
+    message += `The dashboard includes:\n`;
+    message += `✨ Interactive charts and graphs\n`;
+    message += `📊 Detailed analytics\n`;
+    message += `📈 Daily trend analysis\n`;
+    message += `📦 Component breakdown\n`;
+    message += `📉 Week-over-week comparison\n\n`;
+    message += `Generated: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n`;
+    message += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
+    
+    // Send to Slack
+    const response = await fetch(config.slackWebhookUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ message })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Slack notification failed: ${response.status}`);
+    }
+    
+    console.log('✅ Weekly dashboard notification sent to Slack');
+    
+    // Open dashboard in new tab
+    chrome.tabs.create({ url: dashboardUrl });
+    
+  } catch (error) {
+    console.error('❌ Error sending weekly dashboard notification:', error);
+    
+    // Send error notification
+    try {
+      const config = await getConfig();
+      if (config.slackWebhookUrl) {
+        await sendErrorNotification(config.slackWebhookUrl, error);
+      }
+    } catch (notificationError) {
+      console.error('Failed to send error notification:', notificationError);
+    }
+  }
+}
+
+
+
 

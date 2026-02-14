@@ -5,6 +5,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   
   // Set up event listeners
   document.getElementById('checkNowBtn').addEventListener('click', checkNow);
+  document.getElementById('dashboardBtn').addEventListener('click', openDashboard);
   document.getElementById('optionsBtn').addEventListener('click', openOptions);
 });
 
@@ -78,6 +79,28 @@ async function checkNow() {
 // Open options page
 function openOptions() {
   chrome.runtime.openOptionsPage();
+}
+
+// Open weekly dashboard
+async function openDashboard() {
+  const button = document.getElementById('dashboardBtn');
+  button.disabled = true;
+  button.textContent = '📊 Opening...';
+  
+  try {
+    // First, generate/refresh dashboard data
+    await chrome.runtime.sendMessage({ action: 'generateDashboard' });
+    
+    // Then open the dashboard
+    await chrome.runtime.sendMessage({ action: 'openDashboard' });
+    
+    showMessage('✓ Dashboard opened in new tab!', 'success');
+  } catch (error) {
+    showMessage('✗ Error opening dashboard: ' + error.message, 'error');
+  } finally {
+    button.disabled = false;
+    button.textContent = '📊 View Weekly Dashboard';
+  }
 }
 
 // Show message to user
