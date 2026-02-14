@@ -14,238 +14,415 @@
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            padding: 20px;
-            min-height: 100vh;
+            background: linear-gradient(135deg, #0a0e27 0%, #151829 100%);
+            color: #e1e8ed;
+            overflow: hidden;
+            height: 100vh;
         }
 
-        .dashboard {
-            max-width: 1400px;
+        .dashboard-container {
+            max-width: 1800px;
             margin: 0 auto;
-            background: white;
-            border-radius: 20px;
-            padding: 40px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 12px 18px;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
         }
 
-        .header {
-            text-align: center;
-            margin-bottom: 40px;
-            padding-bottom: 20px;
-            border-bottom: 3px solid #667eea;
+        /* Header */
+        .dashboard-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+            padding: 10px 18px;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
         }
 
-        .header h1 {
-            font-size: 2.5em;
-            color: #333;
-            margin-bottom: 10px;
+        .header-left h1 {
+            font-size: 22px;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 3px;
         }
 
-        .header .subtitle {
-            font-size: 1.2em;
-            color: #666;
+        .header-subtitle {
+            font-size: 12px;
+            color: #8899a6;
         }
 
-        .stats-grid {
+        /* KPI Cards - Row 1 */
+        .kpi-row {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-            margin: 30px 0;
+            grid-template-columns: repeat(6, 1fr);
+            gap: 12px;
+            margin-bottom: 12px;
         }
 
-        .stat-card {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 25px;
-            border-radius: 15px;
-            text-align: center;
-            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
-            transition: transform 0.3s ease;
+        .kpi-card {
+            background: linear-gradient(135deg, rgba(29, 155, 240, 0.1) 0%, rgba(29, 155, 240, 0.05) 100%);
+            border: 1px solid rgba(29, 155, 240, 0.2);
+            border-radius: 10px;
+            padding: 12px 14px;
+            transition: all 0.3s ease;
+            animation: fadeIn 0.5s ease-out;
+            position: relative;
+            overflow: hidden;
         }
 
-        .stat-card:hover {
-            transform: translateY(-5px);
+        .kpi-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, #1d9bf0, #00d4aa);
+            opacity: 0;
+            transition: opacity 0.3s ease;
         }
 
-        .stat-card h3 {
-            font-size: 2.5em;
-            margin-bottom: 10px;
+        .kpi-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(29, 155, 240, 0.2);
+            border-color: rgba(29, 155, 240, 0.4);
         }
 
-        .stat-card p {
-            font-size: 1em;
-            opacity: 0.9;
+        .kpi-card:hover::before {
+            opacity: 1;
         }
 
-        .stat-card.trend-up {
-            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+        .kpi-card .icon {
+            font-size: 26px;
+            margin-bottom: 6px;
         }
 
-        .stat-card.trend-down {
-            background: linear-gradient(135deg, #ee0979 0%, #ff6a00 100%);
+        .kpi-card .label {
+            font-size: 11px;
+            color: #8899a6;
+            margin-bottom: 6px;
+            font-weight: 500;
         }
 
-        .chart-section {
-            margin: 40px 0;
-            background: #f8f9fa;
-            padding: 30px;
-            border-radius: 15px;
+        .kpi-card .value {
+            font-size: 28px;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 4px;
         }
 
-        .chart-section h2 {
-            color: #333;
-            margin-bottom: 20px;
-            font-size: 1.5em;
+        .kpi-card .change {
+            font-size: 10px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 3px;
+        }
+
+        .change.positive { color: #00d4aa; }
+        .change.negative { color: #ff6b9d; }
+        .change.neutral { color: #8899a6; }
+
+        /* Progress Ring */
+        .progress-ring {
+            transform: rotate(-90deg);
+        }
+
+        .progress-ring-circle {
+            transition: stroke-dashoffset 1s ease;
+        }
+
+        .progress-value {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 20px;
+            font-weight: 700;
+            color: #00d4aa;
+        }
+
+        /* Row 2: Defect Trend + Defect Distribution */
+        .row-2 {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+
+        /* Row 3: Top Components + Week Comparison */
+        .row-3 {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+
+        /* Chart Cards */
+        .chart-card {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            padding: 14px;
+            backdrop-filter: blur(10px);
+            transition: all 0.3s ease;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .chart-card:hover {
+            border-color: rgba(255, 255, 255, 0.1);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+        }
+
+        .chart-title {
+            font-size: 14px;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
         }
 
         .chart-container {
             position: relative;
-            height: 400px;
-            margin: 20px 0;
+            height: 200px;
         }
 
-        .chart-container.small {
-            height: 300px;
-        }
-
-        .two-column {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 30px;
-        }
-
-        .component-list {
-            margin: 30px 0;
-        }
-
-        .component-item {
-            background: white;
-            padding: 20px;
-            margin: 10px 0;
+        /* Recent Defects Table - Row 4 */
+        .table-section {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.05);
             border-radius: 10px;
-            border-left: 5px solid #667eea;
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-        }
-
-        .component-item h3 {
-            color: #333;
-            margin-bottom: 10px;
-        }
-
-        .component-stats {
+            padding: 14px;
+            backdrop-filter: blur(10px);
+            flex: 1;
+            min-height: 0;
             display: flex;
+            flex-direction: column;
+        }
+
+        .table-wrapper {
+            flex: 1;
+            overflow-y: auto;
+            min-height: 0;
+        }
+
+        .defects-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+
+        .defects-table thead {
+            background: rgba(255, 255, 255, 0.02);
+            position: sticky;
+            top: 0;
+            z-index: 1;
+        }
+
+        .defects-table th {
+            padding: 10px 12px;
+            text-align: left;
+            font-weight: 600;
+            color: #8899a6;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            font-size: 12px;
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .defects-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+            font-size: 12px;
+        }
+
+        .defects-table tr:hover {
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .defect-id {
+            color: #1d9bf0;
+            font-weight: 600;
+        }
+
+        .severity-badge {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .severity-critical {
+            background: rgba(255, 107, 157, 0.2);
+            color: #ff6b9d;
+        }
+
+        .severity-high {
+            background: rgba(255, 173, 31, 0.2);
+            color: #ffad1f;
+        }
+
+        .severity-medium {
+            background: rgba(29, 155, 240, 0.2);
+            color: #1d9bf0;
+        }
+
+        .status-badge {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 600;
+        }
+
+        .status-progress {
+            background: rgba(255, 107, 157, 0.2);
+            color: #ff6b9d;
+        }
+
+        .status-review {
+            background: rgba(29, 155, 240, 0.2);
+            color: #1d9bf0;
+        }
+
+        .status-resolved {
+            background: rgba(0, 212, 170, 0.2);
+            color: #00d4aa;
+        }
+
+        /* Animations */
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(8px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
             gap: 20px;
-            flex-wrap: wrap;
         }
 
-        .component-stat {
-            background: #f8f9fa;
-            padding: 10px 15px;
-            border-radius: 5px;
+        .loading-spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid rgba(255, 255, 255, 0.1);
+            border-top-color: #1d9bf0;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
         }
 
-        .component-stat span {
-            font-weight: bold;
-            color: #667eea;
+        @keyframes spin {
+            to { transform: rotate(360deg); }
         }
 
-        .priority-section {
-            background: #fff3cd;
-            border-left: 5px solid #ffc107;
-            padding: 20px;
-            border-radius: 10px;
-            margin: 30px 0;
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
         }
 
-        .priority-section h2 {
-            color: #856404;
-            margin-bottom: 15px;
+        ::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.02);
         }
 
-        .priority-item {
-            background: white;
-            padding: 15px;
-            margin: 10px 0;
-            border-radius: 5px;
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
         }
 
-        .footer {
-            text-align: center;
-            margin-top: 40px;
-            padding-top: 20px;
-            border-top: 2px solid #e9ecef;
-            color: #666;
-        }
-
-        @media print {
-            body {
-                background: white;
-                padding: 0;
-            }
-            .dashboard {
-                box-shadow: none;
-            }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.15);
         }
     </style>
 </head>
 <body>
-    <div class="dashboard">
-        <div class="header">
-            <h1>📊 Weekly Defect Dashboard</h1>
-            <p class="subtitle" id="weekRange">Loading...</p>
-        </div>
-
-        <div class="stats-grid" id="statsGrid">
-            <!-- Stats cards will be inserted here -->
-        </div>
-
-        <div class="chart-section">
-            <h2>📈 Daily Defect Trend (Last 7 Days)</h2>
-            <div class="chart-container">
-                <canvas id="lineChart"></canvas>
+    <div class="dashboard-container">
+        <!-- Header -->
+        <div class="dashboard-header">
+            <div class="header-left">
+                <h1>📊 Weekly Defect Dashboard</h1>
+                <div class="header-subtitle">
+                    <span id="weekRange">Loading...</span> • <span id="generatedTime">Loading...</span>
+                </div>
             </div>
         </div>
 
-        <div class="two-column">
-            <div class="chart-section">
-                <h2>🎯 Triage Status Breakdown</h2>
-                <div class="chart-container small">
+        <!-- Row 1: KPI Cards -->
+        <div class="kpi-row" id="kpiRow">
+            <!-- KPI cards will be inserted here -->
+        </div>
+
+        <!-- Row 2: Defect Trend + Defect Distribution -->
+        <div class="row-2">
+            <div class="chart-card">
+                <div class="chart-title">📈 Defect Trend</div>
+                <div class="chart-container">
+                    <canvas id="lineChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-card">
+                <div class="chart-title">📊 Defect Distribution</div>
+                <div class="chart-container">
                     <canvas id="pieChart"></canvas>
                 </div>
             </div>
+        </div>
 
-            <div class="chart-section">
-                <h2>📊 Component Comparison</h2>
-                <div class="chart-container small">
+        <!-- Row 3: Top Components + Week vs Week -->
+        <div class="row-3">
+            <div class="chart-card">
+                <div class="chart-title">👑 Top Affected Components</div>
+                <div class="chart-container">
                     <canvas id="barChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-card">
+                <div class="chart-title">📊 Week vs Week</div>
+                <div class="chart-container">
+                    <canvas id="comparisonChart"></canvas>
                 </div>
             </div>
         </div>
 
-        <div class="chart-section">
-            <h2>📉 Week-over-Week Comparison</h2>
-            <div class="chart-container small">
-                <canvas id="comparisonChart"></canvas>
+        <!-- Row 4: Recent Defects Table -->
+        <div class="table-section">
+            <div class="chart-title">🔥 Recent Defects</div>
+            <div class="table-wrapper">
+                <table class="defects-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Title</th>
+                            <th>Component</th>
+                            <th>Severity</th>
+                            <th>Status</th>
+                            <th>Reported</th>
+                            <th>Assignee</th>
+                        </tr>
+                    </thead>
+                    <tbody id="defectsTableBody">
+                        <!-- Defects will be inserted here -->
+                    </tbody>
+                </table>
             </div>
-        </div>
-
-        <div class="priority-section" id="prioritySection">
-            <h2>⚠️ Priority Items</h2>
-            <div id="priorityList">
-                <!-- Priority items will be inserted here -->
-            </div>
-        </div>
-
-        <div class="chart-section">
-            <h2>📦 Component Details</h2>
-            <div class="component-list" id="componentList">
-                <!-- Component items will be inserted here -->
-            </div>
-        </div>
-
-        <div class="footer">
-            <p>Generated: <span id="generatedTime"></span></p>
-            <p>Defect Triaging Extension v1.0</p>
         </div>
     </div>
 
