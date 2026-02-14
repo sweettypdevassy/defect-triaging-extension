@@ -7,6 +7,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('settingsForm').addEventListener('submit', saveSettings);
   document.getElementById('testBtn').addEventListener('click', testNow);
   document.getElementById('clearDashboardBtn').addEventListener('click', clearAndRegenerateDashboard);
+  document.getElementById('testJazzBtn').addEventListener('click', testJazzIntegration);
 });
 
 // Load current settings
@@ -141,6 +142,77 @@ async function clearAndRegenerateDashboard() {
       showMessage('✗ Error regenerating data: ' + response.error, 'error');
     }
   } catch (error) {
+    showMessage('✗ Error: ' + error.message, 'error');
+  } finally {
+    button.disabled = false;
+    button.textContent = originalText;
+  }
+}
+
+// Test Jazz/RTC integration
+async function testJazzIntegration() {
+  const button = document.getElementById('testJazzBtn');
+  const resultDiv = document.getElementById('jazzTestResult');
+  const originalText = button.textContent;
+  
+  button.disabled = true;
+  button.textContent = 'Fetching...';
+  resultDiv.style.display = 'block';
+  resultDiv.style.color = '#004085';
+  resultDiv.innerHTML = '⏳ Connecting to Jazz/RTC system...';
+  
+  try {
+    // Send message to background script to fetch SOE Triage defects
+    const response = await chrome.runtime.sendMessage({ action: 'fetchSOETriageDefects' });
+    
+    if (response.success) {
+      const defects = response.defects || [];
+      const lastFetch = response.lastFetch;
+      
+      resultDiv.style.color = '#155724';
+      resultDiv.innerHTML = `
+        ✅ <strong>Success!</strong><br>
+        Found ${defects.length} SOE Triage overdue defect${defects.length !== 1 ? 's' : ''}<br>
+        Last fetched: ${new Date(lastFetch).toLocaleString('en-IN', {
+          month: 'short',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true
+        })}<br>
+        <br>
+        ${defects.length > 0 ? `
+          <strong>Sample defects:</strong><br>
+          ${defects.slice(0, 3).map(d => `• ${d.id}: ${d.summary.substring(0, 50)}...`).join('<br>')}
+          ${defects.length > 3 ? `<br>...and ${defects.length - 3} more` : ''}
+        ` : 'No overdue defects found.'}
+        <br><br>
+        <em>Refresh the dashboard page to see the updated data.</em>
+      `;
+      
+      showMessage('✓ SOE Triage defects fetched successfully!', 'success');
+    } else {
+      resultDiv.style.color = '#721c24';
+      resultDiv.innerHTML = `
+        ❌ <strong>Error:</strong> ${response.error}<br>
+        <br>
+        <strong>Troubleshooting:</strong><br>
+        • Make sure you're logged in to <a href="https://wasrtc.hursley.ibm.com:9443/jazz" target="_blank">Jazz/RTC</a><br>
+        • Check that your IBM credentials are correct<br>
+        • Verify VPN connection is active<br>
+        • Check browser console for detailed error logs
+      `;
+      
+      showMessage('✗ Failed to fetch SOE Triage defects: ' + response.error, 'error');
+    }
+  } catch (error) {
+    resultDiv.style.color = '#721c24';
+    resultDiv.innerHTML = `
+      ❌ <strong>Error:</strong> ${error.message}<br>
+      <br>
+      Check browser console for details.
+    `;
+    
     showMessage('✗ Error: ' + error.message, 'error');
   } finally {
     button.disabled = false;

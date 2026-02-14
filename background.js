@@ -37,6 +37,10 @@ chrome.runtime.onInstalled.addListener(async () => {
   console.log('Setting up weekly dashboard...');
   await setupWeeklyDashboardAlarm();
   
+  // Set up SOE Triage fetch
+  console.log('Setting up SOE Triage fetch...');
+  await setupSOETriageFetch();
+  
   // Set up VPN detection and auto-login
   setupVPNDetection();
 });
@@ -566,6 +570,21 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
   
+  if (request.action === 'fetchSOETriageDefects') {
+    console.log('🔍 Manual SOE Triage fetch triggered from options page');
+    fetchSOETriageDefects().then(async (defects) => {
+      const result = await chrome.storage.local.get(['soeTriageLastFetch']);
+      sendResponse({
+        success: true,
+        defects: defects,
+        lastFetch: result.soeTriageLastFetch
+      });
+    }).catch(error => {
+      sendResponse({ success: false, error: error.message });
+    });
+    return true;
+  }
+  
   if (request.action === 'testAutoLogin') {
     console.log('🧪 Manual auto-login test triggered from popup');
     attemptAutoLogin().then(() => {
@@ -1026,6 +1045,290 @@ async function sendWeeklyDashboardNotification() {
 
 
 // ============================================
+// JAZZ/RTC SOE TRIAGE INTEGRATION
+// ============================================
+
+// Authenticate with Jazz/RTC system
+async function authenticateJazzRTC() {
+  try {
+    const config = await getConfig();
+    const jazzBaseUrl = 'https://wasrtc.hursley.ibm.com:9443/jazz';
+    
+    // First, try with existing cookies (credentials: 'include')
+    console.log('Attempting Jazz/RTC authentication with existing session...');
+    
+    const testResponse = await fetch(`${jazzBaseUrl}/authenticated/identity`, {
+      credentials: 'include',
+      headers: {
+        'Accept': 'application/json'
+      }
+    });
+    
+    // If we get a successful response, we're already authenticated
+    if (testResponse.ok) {
+      console.log('✓ Already authenticated with Jazz/RTC via existing session');
+      return true;
+    }
+    
+    // If not authenticated, try with stored credentials
+    if (!config.ibmUsername || !config.ibmPassword) {
+      console.error('Jazz/RTC authentication failed: No credentials stored');
+      return false;
+    }
+    
+    console.log('Attempting Jazz/RTC authentication with stored credentials...');
+    
+    // Jazz/RTC uses form-based authentication
+    const authUrl = `${jazzBaseUrl}/authenticated/j_security_check`;
+    const formData = new URLSearchParams();
+    formData.append('j_username', config.ibmUsername);
+    formData.append('j_password', config.ibmPassword);
+    
+    const authResponse = await fetch(authUrl, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: formData.toString()
+    });
+    
+    // Check if authentication was successful
+    if (authResponse.ok || authResponse.redirected) {
+      console.log('✓ Successfully authenticated with Jazz/RTC using stored credentials');
+      return true;
+    }
+    
+    console.error('Jazz/RTC authentication failed:', authResponse.status);
+    return false;
+    
+  } catch (error) {
+    console.error('Error authenticating with Jazz/RTC:', error);
+    return false;
+  }
+}
+
+// Fetch SOE Triage overdue defects from Jazz/RTC
+async function fetchSOETriageDefects() {
+  try {
+    console.log('Fetching SOE Triage overdue defects from Jazz/RTC...');
+    
+    // Ensure we're authenticated
+    const isAuthenticated = await authenticateJazzRTC();
+    if (!isAuthenticated) {
+      throw new Error('Failed to authenticate with Jazz/RTC');
+    }
+    
+    const config = await getConfig();
+    const componentNames = config.componentName
+      .split(',')
+      .map(name => name.trim())
+      .filter(name => name.length > 0);
+    
+    // Jazz/RTC saved query URL
+    // Query ID: _fJ834OXIEemRB5enIPF1MQ (SOE Triage: Overdue Defects)
+    const jazzBaseUrl = 'https://wasrtc.hursley.ibm.com:9443/jazz';
+    const projectArea = 'WS-CD';
+    const queryId = '_fJ834OXIEemRB5enIPF1MQ';
+    
+    // Use OSLC Query API to fetch work items with inline properties
+    // Use oslc.select to get nested properties inline
+    const queryUrl = `${jazzBaseUrl}/oslc/queries/${queryId}/rtc_cm:results?oslc.select=*,rtc_cm:filedAgainst{dcterms:title}`;
+    
+    console.log(`Fetching from: ${queryUrl}`);
+    
+    const response = await fetch(queryUrl, {
+      credentials: 'include',
+      headers: {
+        'Accept': 'application/json',
+        'OSLC-Core-Version': '2.0'
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Jazz/RTC API request failed: ${response.status} ${response.statusText}`);
+    }
+    
+    const contentType = response.headers.get('content-type');
+    if (!contentType || !contentType.includes('application/json')) {
+      throw new Error('Jazz/RTC returned non-JSON response - authentication may have failed');
+    }
+    
+    const data = await response.json();
+    console.log('Jazz/RTC response received:', data);
+    console.log('Jazz/RTC response keys:', Object.keys(data));
+    console.log('Jazz/RTC response type:', typeof data);
+    
+    // Parse work items from response
+    const workItems = await parseJazzWorkItems(data, componentNames);
+    console.log('Parsed work items:', workItems);
+    
+    console.log(`Found ${workItems.length} SOE Triage overdue defects`);
+    
+    // Store in chrome.storage for dashboard
+    await chrome.storage.local.set({ 
+      soeTriageDefects: workItems,
+      soeTriageLastFetch: new Date().toISOString()
+    });
+    
+    return workItems;
+    
+  } catch (error) {
+    console.error('Error fetching SOE Triage defects:', error);
+    throw error;
+  }
+}
+
+// Parse Jazz/RTC work items from API response
+async function parseJazzWorkItems(data, componentNames) {
+  const workItems = [];
+  
+  try {
+    // Jazz/RTC OSLC response structure
+    let results = [];
+    
+    if (data['oslc:results']) {
+      results = data['oslc:results'];
+    } else if (data.results) {
+      results = data.results;
+    } else if (Array.isArray(data)) {
+      results = data;
+    }
+    
+    console.log('Results array length:', results.length);
+    console.log('First result sample:', results[0]);
+    console.log('First result keys:', results[0] ? Object.keys(results[0]) : []);
+    
+    // First pass: collect all functional area URLs that need to be resolved
+    const functionalAreaUrls = new Set();
+    for (const item of results) {
+      const functionalAreaRaw = item['rtc_ext:functional_area'];
+      if (functionalAreaRaw && typeof functionalAreaRaw === 'object' && functionalAreaRaw['rdf:resource']) {
+        functionalAreaUrls.add(functionalAreaRaw['rdf:resource']);
+      }
+    }
+    
+    // Fetch all functional area labels
+    console.log(`Resolving ${functionalAreaUrls.size} functional area URLs...`);
+    const functionalAreaMap = {};
+    for (const url of functionalAreaUrls) {
+      try {
+        const response = await fetch(url, {
+          credentials: 'include',
+          headers: {
+            'Accept': 'application/json'
+          }
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          // The label is in dc:title (Dublin Core title)
+          const label = data['dc:title'] || data['dcterms:title'] || data['rdfs:label'] || data['oslc:label'] || data.title || data.label || data.name || 'Unknown';
+          functionalAreaMap[url] = label;
+          console.log(`✓ Resolved: ${label}`);
+        } else {
+          console.warn(`Failed to resolve ${url}: ${response.status}`);
+        }
+      } catch (error) {
+        console.error(`Error resolving ${url}:`, error);
+      }
+    }
+    
+    // Second pass: process all work items with resolved functional areas
+    for (const item of results) {
+      const id = item['dcterms:identifier'] || item.identifier || item.id || 'N/A';
+      const summary = item['dcterms:title'] || item.title || item.summary || 'N/A';
+      const description = item['dcterms:description'] || item.description || '';
+      
+      // Functional Area - resolve from rdf:resource URL
+      let functionalArea = 'N/A';
+      const functionalAreaRaw = item['rtc_ext:functional_area'];
+      if (functionalAreaRaw) {
+        if (typeof functionalAreaRaw === 'object' && functionalAreaRaw['rdf:resource']) {
+          // Look up the resolved label
+          functionalArea = functionalAreaMap[functionalAreaRaw['rdf:resource']] || 'N/A';
+        } else if (typeof functionalAreaRaw === 'string') {
+          functionalArea = functionalAreaRaw;
+        }
+      }
+      
+      // Filed Against (category/component) - can be object or string
+      // With oslc.select, this should now have dcterms:title inline
+      let filedAgainstRaw = item['rtc_cm:filedAgainst'] ||
+                            item.filedAgainst ||
+                            item.category;
+      const filedAgainst = typeof filedAgainstRaw === 'object' ?
+        (filedAgainstRaw['dcterms:title'] || filedAgainstRaw.title || filedAgainstRaw.name || filedAgainstRaw.label || 'N/A') :
+        (filedAgainstRaw || 'N/A');
+      
+      // Creation Date
+      const creationDate = item['dcterms:created'] || item.created || item.creationDate;
+      const formattedDate = creationDate ?
+        new Date(creationDate).toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric'
+        }) : 'N/A';
+      
+      // Owner - can be object or string
+      let ownerRaw = item['rtc_cm:ownedBy'] ||
+                     item.ownedBy ||
+                     item.owner ||
+                     item['dcterms:creator'];
+      const ownedBy = typeof ownerRaw === 'object' ?
+        (ownerRaw.title || ownerRaw.name || ownerRaw.label || 'Unassigned') :
+        (ownerRaw || 'Unassigned');
+      
+      // Filter by monitored components using Functional Area field
+      const functionalAreaStr = String(functionalArea).toLowerCase();
+      
+      console.log(`Defect ${id}: functionalArea="${functionalArea}", filedAgainst="${filedAgainst}"`);
+      
+      const shouldInclude = componentNames.length === 0 ||
+                           componentNames.some(comp => {
+                             const match = functionalAreaStr.includes(comp.toLowerCase());
+                             if (match) console.log(`  ✓ Matched component: ${comp}`);
+                             return match;
+                           });
+      
+      console.log(`  shouldInclude: ${shouldInclude}`);
+      
+      if (shouldInclude) {
+        workItems.push({
+          id: id,
+          summary: summary,
+          functionalArea: functionalArea,
+          filedAgainst: filedAgainst,
+          creationDate: formattedDate,
+          ownedBy: ownedBy,
+          description: description
+        });
+      }
+    }
+    
+  } catch (error) {
+    console.error('Error parsing Jazz work items:', error);
+  }
+  
+  return workItems;
+}
+
+// Set up periodic fetch of SOE Triage defects
+async function setupSOETriageFetch() {
+  // Clear existing alarm
+  await chrome.alarms.clear('soeTriageFetch');
+  
+  // Create alarm to fetch SOE Triage defects every 2 hours
+  chrome.alarms.create('soeTriageFetch', {
+    delayInMinutes: 1, // Start after 1 minute
+    periodInMinutes: 120 // Repeat every 2 hours
+  });
+  
+  console.log('SOE Triage fetch scheduled - will run every 2 hours');
+}
+
+
+// ============================================
 // VPN DETECTION AND AUTO-LOGIN FUNCTIONALITY
 // ============================================
 
@@ -1406,7 +1709,7 @@ function fillW3IDCredentials(username, password) {
   }
 }
 
-// Update alarm handler to include VPN check
+// Update alarm handler to include VPN check and SOE Triage fetch
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'dailyDefectCheck') {
     console.log('Daily defect check triggered');
@@ -1421,6 +1724,13 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     await sendWeeklyDashboardNotification();
   } else if (alarm.name === 'vpnCheck') {
     await checkVPNStatus();
+  } else if (alarm.name === 'soeTriageFetch') {
+    console.log('SOE Triage fetch triggered');
+    try {
+      await fetchSOETriageDefects();
+    } catch (error) {
+      console.error('Failed to fetch SOE Triage defects:', error);
+    }
   }
 });
 

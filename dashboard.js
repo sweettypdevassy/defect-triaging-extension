@@ -510,53 +510,58 @@ function renderBarChart(componentBreakdown) {
     });
 }
 
-function renderRecentDefects(data) {
+async function renderRecentDefects(data) {
     const tbody = document.getElementById('defectsTableBody');
     
-    // TODO: Fetch real defects from Jazz/RTC system
-    // URL: https://wasrtc.hursley.ibm.com:9443/jazz/web/projects/WS-CD#action=com.ibm.team.workitem.runSavedQuery&id=_fJ834OXIEemRB5enIPF1MQ
-    // For now, showing placeholder data with correct structure
+    // Fetch real SOE Triage defects from chrome.storage
+    const result = await chrome.storage.local.get(['soeTriageDefects', 'soeTriageLastFetch']);
+    const soeTriageDefects = result.soeTriageDefects || [];
+    const lastFetch = result.soeTriageLastFetch;
     
-    const soeTriageDefects = [
-        {
-            id: '123456',
-            summary: 'Defect needs triage - overdue',
-            functionalArea: 'JPA',
-            filedAgainst: 'WebSphere Application Server',
-            creationDate: 'Feb 10, 2026',
-            ownedBy: 'Unassigned'
-        },
-        {
-            id: '123457',
-            summary: 'Critical issue requiring immediate triage',
-            functionalArea: 'Spring Boot',
-            filedAgainst: 'Liberty Runtime',
-            creationDate: 'Feb 12, 2026',
-            ownedBy: 'John Doe'
-        },
-        {
-            id: '123458',
-            summary: 'Performance degradation - needs investigation',
-            functionalArea: 'JCA',
-            filedAgainst: 'Resource Adapter',
-            creationDate: 'Feb 13, 2026',
-            ownedBy: 'Jane Smith'
-        }
-    ];
-
+    // Show loading state initially
+    if (!lastFetch) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="6" style="text-align: center; padding: 20px; color: #8899a6;">
+                    <div style="display: flex; align-items: center; justify-content: center; gap: 10px;">
+                        <div class="loading-spinner" style="width: 20px; height: 20px; border: 2px solid rgba(255,255,255,0.1); border-top-color: #1d9bf0; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+                        <span>Fetching SOE Triage defects from Jazz/RTC...</span>
+                    </div>
+                </td>
+            </tr>
+        `;
+        return;
+    }
+    
     if (soeTriageDefects.length === 0) {
         tbody.innerHTML = `
             <tr>
                 <td colspan="6" style="text-align: center; padding: 20px; color: #8899a6;">
-                    No overdue SOE triage defects found
+                    ✅ No overdue SOE triage defects found
+                    <div style="margin-top: 8px; font-size: 11px; opacity: 0.7;">
+                        Last checked: ${new Date(lastFetch).toLocaleString('en-IN', {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: 'numeric',
+                            minute: '2-digit',
+                            hour12: true
+                        })}
+                    </div>
                 </td>
             </tr>
         `;
     } else {
         tbody.innerHTML = soeTriageDefects.map(defect => `
             <tr>
-                <td><span class="defect-id">${defect.id}</span></td>
-                <td>${defect.summary}</td>
+                <td>
+                    <a href="https://wasrtc.hursley.ibm.com:9443/jazz/web/projects/WS-CD#action=com.ibm.team.workitem.viewWorkItem&id=${defect.id}"
+                       target="_blank"
+                       class="defect-id"
+                       style="color: #1d9bf0; text-decoration: none;">
+                        ${defect.id}
+                    </a>
+                </td>
+                <td title="${defect.summary}">${defect.summary}</td>
                 <td>${defect.functionalArea}</td>
                 <td>${defect.filedAgainst}</td>
                 <td>${defect.creationDate}</td>
