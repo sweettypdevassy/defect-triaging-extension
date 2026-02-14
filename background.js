@@ -45,6 +45,17 @@ chrome.runtime.onInstalled.addListener(async () => {
   setupVPNDetection();
 });
 
+// Handle Chrome startup - check for missed scheduled checks
+chrome.runtime.onStartup.addListener(async () => {
+  console.log('Chrome started - checking for missed scheduled checks...');
+  
+  // Clear any stuck login flags from previous session
+  await chrome.storage.local.remove(['loginInProgress']);
+  console.log('✓ Cleared stuck login flags');
+  
+  await checkForMissedScheduledCheck();
+});
+
 // Get configuration from storage
 async function getConfig() {
   const result = await chrome.storage.sync.get(DEFAULT_CONFIG);
@@ -127,7 +138,11 @@ async function keepSessionAlive() {
       console.log('⚠️ IBM session keepalive returned status:', response.status);
     }
   } catch (error) {
-    console.error('Session keepalive error:', error.message);
+    // Silently handle network errors (expected when not on VPN or system is down)
+    // Only log if it's not a network error
+    if (!error.message.includes('Failed to fetch')) {
+      console.error('Session keepalive error:', error.message);
+    }
     // Don't throw - this is a background task
   }
 }
@@ -145,6 +160,62 @@ async function checkForAutoRetry() {
     }
   } catch (error) {
     console.error('Auto-retry check error:', error.message);
+  }
+}
+
+// Check for missed scheduled checks when Chrome starts
+async function checkForMissedScheduledCheck() {
+  try {
+    const config = await getConfig();
+    
+    if (!config.enabled) {
+      console.log('Automation is disabled');
+      return;
+    }
+    
+    // Get last check time
+    const lastCheck = config.lastCheck ? new Date(config.lastCheck) : null;
+    const now = new Date();
+    
+    // Parse scheduled check time
+    const [hours, minutes] = config.checkTime.split(':').map(Number);
+    
+    // Calculate when the check should have run today
+    const scheduledTimeToday = new Date();
+    scheduledTimeToday.setHours(hours, minutes, 0, 0);
+    
+    // Calculate when the check should have run yesterday
+    const scheduledTimeYesterday = new Date(scheduledTimeToday);
+    scheduledTimeYesterday.setDate(scheduledTimeYesterday.getDate() - 1);
+    
+    console.log(`Last check: ${lastCheck ? lastCheck.toLocaleString() : 'Never'}`);
+    console.log(`Scheduled time today: ${scheduledTimeToday.toLocaleString()}`);
+    console.log(`Scheduled time yesterday: ${scheduledTimeYesterday.toLocaleString()}`);
+    
+    // Check if we missed today's check (scheduled time has passed but no check was done)
+    const missedTodayCheck = now > scheduledTimeToday &&
+                            (!lastCheck || lastCheck < scheduledTimeToday);
+    
+    // Check if we missed yesterday's check (no check done yesterday)
+    const missedYesterdayCheck = !lastCheck || lastCheck < scheduledTimeYesterday;
+    
+    if (missedTodayCheck) {
+      console.log('⚠️ Missed today\'s scheduled check - running now...');
+      // Clear any login error flags to prevent duplicate checks
+      await chrome.storage.local.remove(['lastLoginError']);
+      await checkDefects();
+    } else if (missedYesterdayCheck && now < scheduledTimeToday) {
+      // If we haven't checked since yesterday and today's check hasn't happened yet
+      console.log('⚠️ Missed yesterday\'s scheduled check - running now...');
+      // Clear any login error flags to prevent duplicate checks
+      await chrome.storage.local.remove(['lastLoginError']);
+      await checkDefects();
+    } else {
+      console.log('✓ No missed checks detected');
+    }
+    
+  } catch (error) {
+    console.error('Error checking for missed scheduled checks:', error);
   }
 }
 
@@ -356,17 +427,13 @@ async function checkDefects() {
     const isLoginError = error.message && error.message.includes('Not logged in');
     
     if (isLoginError) {
-      // Login required - trigger auto-login flow instead of sending Slack error
+      // Login required - trigger auto-login flow (NO Slack notification for login errors)
       console.log('🔑 Login required - triggering auto-login flow...');
       await chrome.storage.local.set({ lastLoginError: new Date().toISOString() });
       
-      // Trigger auto-login (will show Chrome notification, not Slack error)
-      const config = await getConfig();
-      if (config.autoLogin && config.ibmUsername && config.ibmPassword) {
-        await attemptAutoLogin();
-      } else {
-        console.log('⚠️ Auto-login not configured - user needs to login manually');
-      }
+      // Trigger auto-login to open the login page
+      await attemptAutoLogin();
+      console.log('✓ attemptAutoLogin() completed');
     } else {
       // Other errors (network issues, etc.) - send to Slack with duplicate suppression
       const errorKey = error.message || 'unknown_error';
@@ -1048,63 +1115,152 @@ async function sendWeeklyDashboardNotification() {
 // JAZZ/RTC SOE TRIAGE INTEGRATION
 // ============================================
 
-// Authenticate with Jazz/RTC system
-async function authenticateJazzRTC() {
+// Check if authenticated with Jazz/RTC by trying the actual API
+async function isAuthenticatedWithJazzRTC() {
   try {
-    const config = await getConfig();
+    // Try to access the actual query API to check authentication
     const jazzBaseUrl = 'https://wasrtc.hursley.ibm.com:9443/jazz';
+    const queryId = '_fJ834OXIEemRB5enIPF1MQ';
+    const queryUrl = `${jazzBaseUrl}/oslc/queries/${queryId}/rtc_cm:results?oslc.select=*,rtc_cm:filedAgainst{dcterms:title}`;
     
-    // First, try with existing cookies (credentials: 'include')
-    console.log('Attempting Jazz/RTC authentication with existing session...');
-    
-    const testResponse = await fetch(`${jazzBaseUrl}/authenticated/identity`, {
+    const response = await fetch(queryUrl, {
       credentials: 'include',
       headers: {
-        'Accept': 'application/json'
-      }
-    });
-    
-    // If we get a successful response, we're already authenticated
-    if (testResponse.ok) {
-      console.log('✓ Already authenticated with Jazz/RTC via existing session');
-      return true;
-    }
-    
-    // If not authenticated, try with stored credentials
-    if (!config.ibmUsername || !config.ibmPassword) {
-      console.error('Jazz/RTC authentication failed: No credentials stored');
-      return false;
-    }
-    
-    console.log('Attempting Jazz/RTC authentication with stored credentials...');
-    
-    // Jazz/RTC uses form-based authentication
-    const authUrl = `${jazzBaseUrl}/authenticated/j_security_check`;
-    const formData = new URLSearchParams();
-    formData.append('j_username', config.ibmUsername);
-    formData.append('j_password', config.ibmPassword);
-    
-    const authResponse = await fetch(authUrl, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded'
+        'Accept': 'application/json',
+        'OSLC-Core-Version': '2.0'
       },
-      body: formData.toString()
+      cache: 'no-cache'
     });
     
-    // Check if authentication was successful
-    if (authResponse.ok || authResponse.redirected) {
-      console.log('✓ Successfully authenticated with Jazz/RTC using stored credentials');
-      return true;
+    // Check if we got JSON response (authenticated) or HTML (not authenticated)
+    const contentType = response.headers.get('content-type');
+    const isAuthenticated = response.ok && contentType && contentType.includes('application/json');
+    
+    console.log(`Jazz/RTC auth check: status=${response.status}, contentType=${contentType}, authenticated=${isAuthenticated}`);
+    
+    return isAuthenticated;
+  } catch (error) {
+    console.log('Could not check Jazz/RTC authentication status:', error.message);
+    return false;
+  }
+}
+
+// Open Jazz/RTC login page and auto-fill credentials
+async function openJazzRTCLoginPage() {
+  try {
+    console.log('🔑 Opening Jazz/RTC login page for authentication...');
+    
+    const config = await getConfig();
+    
+    if (!config.ibmUsername || !config.ibmPassword) {
+      console.log('⚠️ IBM credentials not configured');
+      chrome.notifications.create('jazz-config-required', {
+        type: 'basic',
+        iconUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        title: '⚙️ Configuration Required',
+        message: 'Please configure your IBM credentials in the extension options.',
+        priority: 2,
+        requireInteraction: true
+      });
+      return;
     }
     
-    console.error('Jazz/RTC authentication failed:', authResponse.status);
-    return false;
+    // Open the Jazz/RTC login page
+    const jazzUrl = 'https://wasrtc.hursley.ibm.com:9443/jazz/authenticated/identity';
+    
+    const tab = await chrome.tabs.create({
+      url: jazzUrl,
+      active: false // Open in background initially
+    });
+    
+    console.log(`✓ Jazz/RTC login tab created: ID=${tab.id}`);
+    
+    // Wait for page to load
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    // Inject script to auto-fill and submit credentials
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: (username, password) => {
+          // Find username and password fields
+          const usernameField = document.querySelector('input[name="j_username"]') ||
+                               document.querySelector('input[type="text"]') ||
+                               document.querySelector('#username');
+          
+          const passwordField = document.querySelector('input[name="j_password"]') ||
+                               document.querySelector('input[type="password"]') ||
+                               document.querySelector('#password');
+          
+          const submitButton = document.querySelector('input[type="submit"]') ||
+                              document.querySelector('button[type="submit"]') ||
+                              document.querySelector('button');
+          
+          if (usernameField && passwordField) {
+            console.log('✓ Found login form fields');
+            usernameField.value = username;
+            passwordField.value = password;
+            
+            if (submitButton) {
+              console.log('✓ Submitting login form');
+              submitButton.click();
+            } else {
+              // Try to submit the form directly
+              const form = usernameField.closest('form');
+              if (form) {
+                form.submit();
+              }
+            }
+          } else {
+            console.log('⚠️ Could not find login form fields');
+          }
+        },
+        args: [config.ibmUsername, config.ibmPassword]
+      });
+      
+      console.log('✓ Credentials auto-filled and submitted');
+      
+      // Wait for login to complete
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      
+      // Close the tab after successful login
+      await chrome.tabs.remove(tab.id);
+      console.log('✓ Login tab closed');
+      
+      // Show success notification
+      chrome.notifications.create('jazz-login-success', {
+        type: 'basic',
+        iconUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        title: '✅ Jazz/RTC Login Successful',
+        message: 'You are now logged in to Jazz/RTC. Fetching SOE Triage defects...',
+        priority: 1
+      });
+      
+      // Trigger SOE Triage fetch after successful login
+      setTimeout(() => {
+        fetchSOETriageDefects().catch(error => {
+          console.error('Error fetching SOE Triage defects after login:', error);
+        });
+      }, 1000);
+      
+    } catch (scriptError) {
+      console.error('Error injecting login script:', scriptError);
+      
+      // If auto-fill fails, show the tab so user can login manually
+      await chrome.tabs.update(tab.id, { active: true });
+      
+      chrome.notifications.create('jazz-manual-login', {
+        type: 'basic',
+        iconUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        title: '🔐 Manual Login Required',
+        message: 'Please log in to Jazz/RTC manually with your IBM credentials.',
+        priority: 2,
+        requireInteraction: true
+      });
+    }
     
   } catch (error) {
-    console.error('Error authenticating with Jazz/RTC:', error);
-    return false;
+    console.error('Error opening Jazz/RTC login page:', error);
   }
 }
 
@@ -1113,10 +1269,13 @@ async function fetchSOETriageDefects() {
   try {
     console.log('Fetching SOE Triage overdue defects from Jazz/RTC...');
     
-    // Ensure we're authenticated
-    const isAuthenticated = await authenticateJazzRTC();
+    // Check if we're authenticated with Jazz/RTC
+    const isAuthenticated = await isAuthenticatedWithJazzRTC();
     if (!isAuthenticated) {
-      throw new Error('Failed to authenticate with Jazz/RTC');
+      console.log('🔑 Jazz/RTC authentication required - opening login page...');
+      await openJazzRTCLoginPage();
+      // Don't throw error - auto-login will trigger fetch automatically
+      return [];
     }
     
     const config = await getConfig();
@@ -1406,14 +1565,38 @@ async function checkVPNStatus() {
 // Attempt automatic login to IBM w3id
 async function attemptAutoLogin() {
   try {
+    // Check if login is already in progress
+    const storage = await chrome.storage.local.get(['loginInProgress']);
+    if (storage.loginInProgress) {
+      console.log('⏭️ Login already in progress, skipping...');
+      return;
+    }
+    
+    // Mark login as in progress
+    await chrome.storage.local.set({ loginInProgress: true });
+    
     console.log('🔐 Attempting automatic login...');
+    console.log('📍 Current time:', new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }));
     
     const config = await getConfig();
     
     if (!config.ibmUsername || !config.ibmPassword) {
       console.log('⚠️ IBM credentials not configured');
+      console.log('   Please configure credentials in the extension options');
+      
+      // Show notification to configure credentials
+      chrome.notifications.create('config-required', {
+        type: 'basic',
+        iconUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        title: '⚙️ Configuration Required',
+        message: 'Please configure your IBM credentials in the extension options.',
+        priority: 2,
+        requireInteraction: true
+      });
       return;
     }
+    
+    console.log('✓ Credentials configured, checking login status...');
     
     // Check if already logged in
     let alreadyLoggedIn = false;
@@ -1435,11 +1618,13 @@ async function attemptAutoLogin() {
     // If already logged in, just notify user
     if (alreadyLoggedIn) {
       console.log('✓ You are already logged in. No need to authenticate again.');
+      await chrome.storage.local.remove(['loginInProgress']);
       return;
     }
     
     // Not logged in, need to authenticate
     console.log('🔑 Not logged in, opening login page...');
+    console.log('   Creating new tab for login...');
     
     // Open the IBM page in a new tab in the BACKGROUND first
     // If it auto-logs in, user won't see it. If manual login needed, we'll show it.
@@ -1447,6 +1632,8 @@ async function attemptAutoLogin() {
       url: 'https://libh-proxy1.fyre.ibm.com/buildBreakReport/',
       active: false // Open in background initially
     });
+    
+    console.log(`✓ Login tab created: ID=${tab.id}, WindowID=${tab.windowId}`);
     
     // Store the tab and window IDs for notification click handler
     await chrome.storage.local.set({
@@ -1457,12 +1644,27 @@ async function attemptAutoLogin() {
     
     console.log(`✓ Login page opened in background tab ${tab.id}`);
     console.log('   Waiting to see if manual login is required...');
+    console.log('   Monitoring tab for authentication flow...');
     
     // Still monitor for successful login, but don't try to automate the click
     await handleW3IDAuthentication(tab.id, config.ibmUsername, config.ibmPassword);
     
   } catch (error) {
     console.error('❌ Auto-login error:', error);
+    console.error('   Error stack:', error.stack);
+    
+    // Clear login in progress flag
+    await chrome.storage.local.remove(['loginInProgress']);
+    
+    // Show error notification
+    chrome.notifications.create('login-error', {
+      type: 'basic',
+      iconUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+      title: '❌ Login Error',
+      message: `Failed to open login page: ${error.message}`,
+      priority: 2,
+      requireInteraction: true
+    });
   }
 }
 
@@ -1538,19 +1740,59 @@ async function handleW3IDAuthentication(tabId, username, password) {
             !tab.url.includes('login')) {
           
           if (!authAttempted) {
-            // Auto-logged in! Close the tab silently
+            // Auto-logged in! Make an API call from tab context to establish session
             console.log('✓ Auto-logged in successfully (already authenticated in browser)');
+            console.log('   Making API call from tab context to establish session...');
             chrome.tabs.onUpdated.removeListener(listener);
-            setTimeout(() => {
+            
+            // Execute script in tab to make API call and establish session
+            try {
+              await chrome.scripting.executeScript({
+                target: { tabId: tabId },
+                func: () => {
+                  // Make API call from tab context to establish cookies
+                  fetch('https://libh-proxy1.fyre.ibm.com/buildBreakReport/rest2/defects/buildbreak/fas?fas=Messaging', {
+                    credentials: 'include',
+                    headers: { 'Accept': 'application/json' }
+                  }).then(() => {
+                    console.log('✓ Session established from tab context');
+                  }).catch(err => {
+                    console.log('⚠️ Error establishing session:', err);
+                  });
+                }
+              });
+              
+              console.log('   Waiting 3 seconds for session to fully establish...');
+              setTimeout(async () => {
+                chrome.tabs.remove(tabId);
+                // Clear login in progress flag
+                await chrome.storage.local.remove(['loginInProgress']);
+                // Retry defect check after session is established
+                setTimeout(() => {
+                  console.log('🔄 Retrying defect check after session established...');
+                  checkDefects();
+                }, 2000);
+              }, 3000);
+            } catch (error) {
+              console.error('Error establishing session:', error);
               chrome.tabs.remove(tabId);
-            }, 1000);
+              await chrome.storage.local.remove(['loginInProgress']);
+            }
             resolve();
           } else {
             // Logged in after manual authentication
             console.log('✓ Successfully logged in to IBM system after manual authentication!');
+            console.log('   Waiting 5 seconds for session cookies to propagate...');
             chrome.tabs.onUpdated.removeListener(listener);
-            setTimeout(() => {
+            setTimeout(async () => {
               chrome.tabs.remove(tabId);
+              // Clear login in progress flag
+              await chrome.storage.local.remove(['loginInProgress']);
+              // Retry defect check after successful login with longer delay
+              setTimeout(() => {
+                console.log('🔄 Retrying defect check after successful login...');
+                checkDefects();
+              }, 3000); // Increased to 3 seconds
             }, 2000);
             resolve();
           }
@@ -1561,9 +1803,11 @@ async function handleW3IDAuthentication(tabId, username, password) {
     chrome.tabs.onUpdated.addListener(listener);
     
     // Timeout after 60 seconds
-    setTimeout(() => {
+    setTimeout(async () => {
       chrome.tabs.onUpdated.removeListener(listener);
       console.log('⚠️ Auto-login timeout - please login manually');
+      // Clear login in progress flag on timeout
+      await chrome.storage.local.remove(['loginInProgress']);
       resolve(); // Don't reject, just resolve
     }, 60000);
   });
