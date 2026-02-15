@@ -475,7 +475,10 @@ async function checkDefects() {
     if (isLoginError) {
       // Login required - trigger auto-login flow (NO Slack notification for login errors)
       console.log('🔑 Login required - triggering auto-login flow...');
-      await chrome.storage.local.set({ lastLoginError: new Date().toISOString() });
+      await chrome.storage.local.set({
+        lastLoginError: new Date().toISOString(),
+        needsDataRetry: true  // Mark that we need to retry data collection after login
+      });
       
       // Trigger auto-login to open the login page
       await attemptAutoLogin();
