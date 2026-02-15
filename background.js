@@ -49,9 +49,9 @@ chrome.runtime.onInstalled.addListener(async () => {
 chrome.runtime.onStartup.addListener(async () => {
   console.log('Chrome started - checking for missed scheduled checks...');
   
-  // Clear any stuck login flags from previous session
-  await chrome.storage.local.remove(['loginInProgress']);
-  console.log('✓ Cleared stuck login flags');
+  // Clear any stuck flags from previous session
+  await chrome.storage.local.remove(['loginInProgress', 'checkInProgress']);
+  console.log('✓ Cleared stuck flags from previous session');
   
   await checkForMissedScheduledCheck();
 });
@@ -202,13 +202,13 @@ async function checkForMissedScheduledCheck() {
     if (missedTodayCheck) {
       console.log('⚠️ Missed today\'s scheduled check - running now...');
       // Clear any login error flags to prevent duplicate checks
-      await chrome.storage.local.remove(['lastLoginError']);
+      await chrome.storage.local.remove(['lastLoginError', 'checkInProgress']);
       await checkDefects();
     } else if (missedYesterdayCheck && now < scheduledTimeToday) {
       // If we haven't checked since yesterday and today's check hasn't happened yet
       console.log('⚠️ Missed yesterday\'s scheduled check - running now...');
       // Clear any login error flags to prevent duplicate checks
-      await chrome.storage.local.remove(['lastLoginError']);
+      await chrome.storage.local.remove(['lastLoginError', 'checkInProgress']);
       await checkDefects();
     } else {
       console.log('✓ No missed checks detected');
@@ -224,6 +224,20 @@ async function checkForMissedScheduledCheck() {
 // Send Slack notification grouped by component
 async function sendSlackNotificationGrouped(webhookUrl, componentDefectsMap, totalDefects) {
   const timestamp = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+  
+  // Check for duplicate notification suppression (within 2 minutes)
+  const storage = await chrome.storage.local.get(['lastNotificationSent', 'lastNotificationCount']);
+  const lastNotificationTime = storage.lastNotificationSent ? new Date(storage.lastNotificationSent) : null;
+  const lastNotificationCount = storage.lastNotificationCount || 0;
+  const now = new Date();
+  
+  // If same defect count was sent within last 2 minutes, skip
+  if (lastNotificationTime &&
+      lastNotificationCount === totalDefects &&
+      (now - lastNotificationTime) < 2 * 60 * 1000) {
+    console.log('⏭️ Skipping duplicate notification (same count within 2 minutes)');
+    return;
+  }
   
   let message;
   
@@ -286,6 +300,12 @@ async function sendSlackNotificationGrouped(webhookUrl, componentDefectsMap, tot
     throw new Error(`Slack notification failed: ${response.status}`);
   }
   
+  // Record this notification to prevent duplicates
+  await chrome.storage.local.set({
+    lastNotificationSent: now.toISOString(),
+    lastNotificationCount: totalDefects
+  });
+  
   console.log('Slack notification sent successfully');
 }
 
@@ -329,6 +349,17 @@ async function sendErrorNotification(webhookUrl, error) {
 // Main function to check defects and send notification
 async function checkDefects() {
   try {
+    // Prevent duplicate simultaneous checks
+    const checkStatus = await chrome.storage.local.get(['checkInProgress']);
+    if (checkStatus.checkInProgress) {
+      console.log('⏭️ Check already in progress - skipping duplicate check');
+      return;
+    }
+    
+    // Set flag to indicate check is in progress
+    await chrome.storage.local.set({ checkInProgress: true });
+    console.log('🔒 Check started - flag set');
+    
     const config = await getConfig();
     
     if (!config.slackWebhookUrl) {
@@ -418,9 +449,24 @@ async function checkDefects() {
     // Update last check time
     await chrome.storage.sync.set({ lastCheck: new Date().toISOString() });
     
+    // Clear the check-in-progress flag
+    await chrome.storage.local.remove(['checkInProgress']);
+    console.log('🔓 Check completed - flag cleared');
+    
     console.log('✅ Defect check complete - Slack notification sent');
     
+    // Check if we need to retry all components data collection
+    const retryStatus = await chrome.storage.local.get(['needsDataRetry']);
+    if (retryStatus.needsDataRetry) {
+      console.log('🔄 Retrying all components data collection after successful check...');
+      await chrome.storage.local.remove(['needsDataRetry']);
+      await storeAllComponentsData();
+    }
+    
   } catch (error) {
+    // Clear the check-in-progress flag on error too
+    await chrome.storage.local.remove(['checkInProgress']);
+    console.log('🔓 Check failed - flag cleared');
     console.error('❌ Error checking defects:', error);
     
     // Check if this is a login error
@@ -1669,6 +1715,9 @@ async function handleVPNStatusChange(isConnected) {
     // This allows a fresh error notification if the issue persists
     await chrome.storage.local.remove(['lastErrorNotified', 'lastErrorMessage']);
     console.log('🔄 Cleared error notification history - fresh notifications enabled');
+    
+    // Mark that we need to retry data collection
+    await chrome.storage.local.set({ needsDataRetry: true });
     
     // If auto-login is enabled, attempt to login
     if (config.autoLogin && config.ibmUsername && config.ibmPassword) {
