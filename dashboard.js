@@ -5,8 +5,31 @@ let chartInstances = {
     lineChart: null,
     pieChart: null,
     barChart: null,
-    comparisonChart: null
+    comparisonChart: null,
+    explorerLineChart: null,
+    explorerPieChart: null,
+    explorerBarChart: null,
+    explorerComparisonChart: null
 };
+
+// All available components
+const ALL_COMPONENTS = [
+    'AdminCenter', 'App Client', 'Async Scheduling (Persistent Executor, CommonJ)',
+    'Batch', 'Bean Validation', 'Build', 'CDI', 'Classloading',
+    'Cloud/Virtualization', 'Core Security', 'Database (jdbc, oracle, db2, derby)',
+    'Docs', 'Dynacache', 'EE / MP Concurrency', 'EJB Container', 'IIOP/ORB',
+    'IBM i', 'Install', 'InstantOn', 'Intelligent Management', 'JAX-RS',
+    'Jakarta Data', 'Java EE Platform', 'JCA', 'JPA', 'JSON',
+    'Kernel/Bootstrap', 'MCP', 'Messaging', 'MicroProfile Core (config, fault tolerance, reactive)',
+    'MicroProfile GraphQL', 'MicroProfile Observability (metrics, open tracing, health)',
+    'MicroProfile Open API', 'MicroProfile REST Client', 'Mongo', 'OSGi Applications',
+    'Observability', 'Real-Time Comm (WebRTC, SIP)', 'Repository', 'Security SSO (jwt, oauth, oidc, social, mpjwt, saml)',
+    'Spring Boot', 'Systems Management', 'Transactions', 'Transport (cfw, http, ssl, websockets)',
+    'Usage Metering', 'WAS on Cloud', 'Web Comps (servlet, httpsession, jsp, jsf, etc)',
+    'Web Services', 'Web Services Security', 'WebSphere Automation', 'z/OS'
+];
+
+let selectedComponents = [];
 
 // Animated counter function
 function animateCounter(element, target, duration = 1000) {
@@ -515,8 +538,36 @@ async function renderRecentDefects(data) {
     
     // Fetch real SOE Triage defects from chrome.storage
     const result = await chrome.storage.local.get(['soeTriageDefects', 'soeTriageLastFetch']);
-    const soeTriageDefects = result.soeTriageDefects || [];
+    const allDefects = result.soeTriageDefects || [];
     const lastFetch = result.soeTriageLastFetch;
+    
+    // Get monitored components from dashboard data (data.componentBreakdown.labels)
+    const monitoredComponentNames = data.componentBreakdown?.labels || [];
+    
+    console.log('=== My Monitored Components SOE Triage ===');
+    console.log('All defects:', allDefects.length);
+    console.log('Monitored components from dashboard:', monitoredComponentNames);
+    
+    // Filter defects by monitored components only (for "My Monitored Components" tab)
+    const soeTriageDefects = allDefects.filter(defect => {
+        const match = monitoredComponentNames.some(compName => {
+            const compLower = compName.toLowerCase();
+            const functionalAreaLower = (defect.functionalArea || '').toLowerCase();
+            const filedAgainstLower = (defect.filedAgainst || '').toLowerCase();
+            
+            console.log(`Checking "${compName}" against defect ${defect.id}:`, {
+                functionalArea: defect.functionalArea,
+                filedAgainst: defect.filedAgainst,
+                matchFA: functionalAreaLower.includes(compLower),
+                matchFiled: filedAgainstLower.includes(compLower)
+            });
+            
+            return functionalAreaLower.includes(compLower) || filedAgainstLower.includes(compLower);
+        });
+        return match;
+    });
+    
+    console.log('Filtered defects for monitored components:', soeTriageDefects.length);
     
     // Show loading state initially
     if (!lastFetch) {
@@ -580,6 +631,529 @@ document.addEventListener('keydown', (e) => {
         console.log('Refreshing dashboard...');
         loadDashboardData();
     }
+});
+
+// ============================================
+// COMPONENT EXPLORER FUNCTIONALITY
+// ============================================
+
+// Initialize component explorer
+function initializeComponentExplorer() {
+    const componentGrid = document.getElementById('componentGrid');
+    
+    // Create checkboxes for all components
+    componentGrid.innerHTML = ALL_COMPONENTS.map(component => `
+        <div class="component-checkbox">
+            <input type="checkbox" id="comp-${component.replace(/[^a-zA-Z0-9]/g, '-')}" value="${component}">
+            <label for="comp-${component.replace(/[^a-zA-Z0-9]/g, '-')}">${component}</label>
+        </div>
+    `).join('');
+    
+    // Add event listeners to checkboxes
+    const checkboxes = componentGrid.querySelectorAll('input[type="checkbox"]');
+    checkboxes.forEach(checkbox => {
+        checkbox.addEventListener('change', updateSelectedComponents);
+    });
+    
+    // Fetch Data button
+    document.getElementById('fetchDataBtn').addEventListener('click', fetchAllComponentsData);
+    
+    // Select All button
+    document.getElementById('selectAllBtn').addEventListener('click', () => {
+        checkboxes.forEach(cb => cb.checked = true);
+        updateSelectedComponents();
+    });
+    
+    // Clear All button
+    document.getElementById('clearAllBtn').addEventListener('click', () => {
+        checkboxes.forEach(cb => cb.checked = false);
+        updateSelectedComponents();
+    });
+    
+    // View Dashboard button
+    document.getElementById('viewDashboardBtn').addEventListener('click', generateExplorerDashboard);
+    
+    // Back to Selection button
+    document.getElementById('backToSelectionBtn').addEventListener('click', () => {
+        // Hide dashboard, show selector
+        document.querySelector('.component-explorer').style.display = 'block';
+        document.getElementById('explorerDashboard').style.display = 'none';
+    });
+}
+
+// Fetch all components data
+async function fetchAllComponentsData() {
+    const fetchBtn = document.getElementById('fetchDataBtn');
+    const originalText = fetchBtn.innerHTML;
+    
+    // Disable button and show loading
+    fetchBtn.disabled = true;
+    fetchBtn.innerHTML = '⏳ Fetching data for 47 components...';
+    
+    try {
+        // Send message to background script to fetch data
+        const response = await chrome.runtime.sendMessage({ action: 'fetchAllComponentsData' });
+        
+        if (response.success) {
+            fetchBtn.innerHTML = '✅ Data fetched successfully!';
+            setTimeout(() => {
+                fetchBtn.innerHTML = originalText;
+                fetchBtn.disabled = false;
+            }, 2000);
+        } else {
+            fetchBtn.innerHTML = '❌ Failed to fetch data';
+            console.error('Fetch error:', response.error);
+            setTimeout(() => {
+                fetchBtn.innerHTML = originalText;
+                fetchBtn.disabled = false;
+            }, 3000);
+        }
+    } catch (error) {
+        fetchBtn.innerHTML = '❌ Error occurred';
+        console.error('Fetch error:', error);
+        setTimeout(() => {
+            fetchBtn.innerHTML = originalText;
+            fetchBtn.disabled = false;
+        }, 3000);
+    }
+}
+
+// Update selected components
+function updateSelectedComponents() {
+    const checkboxes = document.querySelectorAll('#componentGrid input[type="checkbox"]:checked');
+    selectedComponents = Array.from(checkboxes).map(cb => cb.value);
+    
+    // Update count
+    document.getElementById('selectedCount').textContent = `${selectedComponents.length} component${selectedComponents.length !== 1 ? 's' : ''} selected`;
+    
+    // Enable/disable view button
+    document.getElementById('viewDashboardBtn').disabled = selectedComponents.length === 0;
+}
+
+// Generate dashboard for selected components
+async function generateExplorerDashboard() {
+    if (selectedComponents.length === 0) return;
+    
+    console.log('Generating dashboard for:', selectedComponents);
+    
+    // Get all components data
+    const result = await chrome.storage.local.get(['allComponentsSnapshots']);
+    const allSnapshots = result.allComponentsSnapshots || {};
+    
+    // Get last 7 days
+    const dates = [];
+    for (let i = 6; i >= 0; i--) {
+        const date = new Date();
+        date.setDate(date.getDate() - i);
+        dates.push(date.toISOString().split('T')[0]);
+    }
+    
+    // Aggregate data for selected components
+    const aggregatedData = {};
+    dates.forEach(date => {
+        let total = 0, untriaged = 0, testBugs = 0, productBugs = 0, infraBugs = 0;
+        
+        selectedComponents.forEach(component => {
+            const compData = allSnapshots[date]?.[component];
+            if (compData) {
+                total += compData.total || 0;
+                untriaged += compData.untriaged || 0;
+                testBugs += compData.testBugs || 0;
+                productBugs += compData.productBugs || 0;
+                infraBugs += compData.infraBugs || 0;
+            }
+        });
+        
+        aggregatedData[date] = { total, untriaged, testBugs, productBugs, infraBugs };
+    });
+    
+    // Build dashboard data
+    const latestDate = dates[dates.length - 1];
+    const latestData = aggregatedData[latestDate] || {};
+    
+    const dashboardData = {
+        summary: {
+            totalDefects: latestData.total || 0,
+            untriaged: latestData.untriaged || 0,
+            testBugs: latestData.testBugs || 0,
+            productBugs: latestData.productBugs || 0,
+            infraBugs: latestData.infraBugs || 0,
+            trendPercentage: 0
+        },
+        dailyTrend: {
+            labels: dates.map(d => new Date(d).toLocaleDateString('en-US', { weekday: 'short' })),
+            total: dates.map(d => aggregatedData[d]?.total || 0),
+            untriaged: dates.map(d => aggregatedData[d]?.untriaged || 0)
+        },
+        triageBreakdown: {
+            untriaged: latestData.untriaged || 0,
+            testBug: latestData.testBugs || 0,
+            productBug: latestData.productBugs || 0,
+            infrastructure: latestData.infraBugs || 0
+        },
+        componentBreakdown: {
+            labels: selectedComponents,
+            untriaged: selectedComponents.map(comp => allSnapshots[latestDate]?.[comp]?.untriaged || 0),
+            testBugs: selectedComponents.map(comp => allSnapshots[latestDate]?.[comp]?.testBugs || 0),
+            productBugs: selectedComponents.map(comp => allSnapshots[latestDate]?.[comp]?.productBugs || 0),
+            infraBugs: selectedComponents.map(comp => allSnapshots[latestDate]?.[comp]?.infraBugs || 0)
+        }
+    };
+    
+    // Hide selector, show dashboard
+    document.querySelector('.component-explorer').style.display = 'none';
+    document.getElementById('explorerDashboard').style.display = 'block';
+    
+    // Render charts
+    renderExplorerKPICards(dashboardData.summary);
+    renderExplorerLineChart(dashboardData.dailyTrend);
+    renderExplorerPieChart(dashboardData.triageBreakdown, dashboardData.summary);
+    renderExplorerBarChart(dashboardData.componentBreakdown);
+    renderExplorerComparisonChart(dashboardData);
+    
+    // Render SOE Triage table for selected components
+    renderExplorerSOETriageTable(selectedComponents);
+    
+    // Scroll to top of dashboard
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// Render SOE Triage table for explorer
+async function renderExplorerSOETriageTable(components) {
+    const tbody = document.getElementById('explorerDefectsTableBody');
+    
+    // Get SOE triage defects from storage
+    const result = await chrome.storage.local.get(['soeTriageDefects', 'soeTriageLastFetch']);
+    const allDefects = result.soeTriageDefects || [];
+    const lastFetch = result.soeTriageLastFetch;
+    
+    if (!lastFetch) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="6" style="text-align: center; padding: 20px; color: #8899a6;">
+                    <div style="display: flex; align-items: center; justify-content: center; gap: 10px;">
+                        <div class="loading-spinner" style="width: 20px; height: 20px; border: 2px solid rgba(255,255,255,0.1); border-top-color: #1d9bf0; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+                        <span>Fetching SOE Triage defects from Jazz/RTC...</span>
+                    </div>
+                </td>
+            </tr>
+        `;
+        return;
+    }
+    
+    // Filter defects for selected components
+    const filteredDefects = allDefects.filter(defect =>
+        components.some(comp => {
+            const compLower = comp.toLowerCase();
+            const filedAgainstLower = (defect.filedAgainst || '').toLowerCase();
+            const functionalAreaLower = (defect.functionalArea || '').toLowerCase();
+            
+            // Check component name in filed against OR functional area
+            return filedAgainstLower.includes(compLower) ||
+                   functionalAreaLower.includes(compLower) ||
+                   compLower.includes(filedAgainstLower.split('/')[0].trim().toLowerCase());
+        })
+    );
+    
+    if (filteredDefects.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="6" style="text-align: center; padding: 20px; color: #8899a6;">
+                    ✅ No overdue SOE triage defects found
+                    <div style="margin-top: 8px; font-size: 11px; opacity: 0.7;">
+                        Last checked: ${new Date(lastFetch).toLocaleString('en-IN', {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: 'numeric',
+                            minute: '2-digit',
+                            hour12: true
+                        })}
+                    </div>
+                </td>
+            </tr>
+        `;
+    } else {
+        tbody.innerHTML = filteredDefects.map(defect => `
+            <tr>
+                <td>
+                    <a href="https://wasrtc.hursley.ibm.com:9443/jazz/web/projects/WS-CD#action=com.ibm.team.workitem.viewWorkItem&id=${defect.id}"
+                       target="_blank"
+                       class="defect-id"
+                       style="color: #1d9bf0; text-decoration: none;">
+                        ${defect.id}
+                    </a>
+                </td>
+                <td title="${defect.summary}">${defect.summary}</td>
+                <td>${defect.functionalArea}</td>
+                <td>${defect.filedAgainst}</td>
+                <td>${defect.creationDate}</td>
+                <td>${defect.ownedBy}</td>
+            </tr>
+        `).join('');
+    }
+}
+
+// Render explorer KPI cards
+function renderExplorerKPICards(summary) {
+    const kpiRow = document.getElementById('explorerKpiRow');
+    const untriagedPercent = summary.totalDefects > 0
+        ? Math.round((summary.untriaged / summary.totalDefects) * 100)
+        : 0;
+    const slaCompliance = Math.max(0, Math.min(100, 100 - untriagedPercent));
+    
+    kpiRow.innerHTML = `
+        <div class="kpi-card" style="animation-delay: 0s;">
+            <div class="icon">🏆</div>
+            <div class="label">Total Defects</div>
+            <div class="value">${summary.totalDefects}</div>
+        </div>
+        <div class="kpi-card" style="animation-delay: 0.1s;">
+            <div class="icon">📍</div>
+            <div class="label">Untriaged</div>
+            <div class="value">${summary.untriaged}</div>
+            <div class="change neutral">${untriagedPercent}% of total</div>
+        </div>
+        <div class="kpi-card" style="animation-delay: 0.2s;">
+            <div class="icon">⭐</div>
+            <div class="label">Test Bugs</div>
+            <div class="value">${summary.testBugs}</div>
+        </div>
+        <div class="kpi-card" style="animation-delay: 0.3s;">
+            <div class="icon">🔒</div>
+            <div class="label">Product Bugs</div>
+            <div class="value">${summary.productBugs}</div>
+        </div>
+        <div class="kpi-card" style="animation-delay: 0.4s;">
+            <div class="icon">🔮</div>
+            <div class="label">Infrastructure Issues</div>
+            <div class="value">${summary.infraBugs}</div>
+        </div>
+        <div class="kpi-card" style="animation-delay: 0.5s;">
+            <div class="label">SLA Compliance</div>
+            <div style="position: relative; height: 70px; margin: 6px 0;">
+                <svg class="progress-ring" width="70" height="70">
+                    <circle stroke="rgba(255,255,255,0.1)" stroke-width="6" fill="transparent" r="30" cx="35" cy="35"/>
+                    <circle class="progress-ring-circle" stroke="#00d4aa" stroke-width="6" fill="transparent" r="30" cx="35" cy="35"
+                        stroke-dasharray="188" stroke-dashoffset="${188 - (188 * slaCompliance) / 100}" stroke-linecap="round"/>
+                </svg>
+                <div class="progress-value">${slaCompliance}%</div>
+            </div>
+        </div>
+    `;
+}
+
+// Render explorer charts (similar to main dashboard but with explorer canvas IDs)
+function renderExplorerLineChart(dailyTrend) {
+    const ctx = document.getElementById('explorerLineChart').getContext('2d');
+    if (chartInstances.explorerLineChart) chartInstances.explorerLineChart.destroy();
+    
+    Chart.defaults.color = '#8899a6';
+    Chart.defaults.borderColor = 'rgba(255, 255, 255, 0.05)';
+    
+    chartInstances.explorerLineChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: dailyTrend.labels,
+            datasets: [{
+                label: 'Total Defects',
+                data: dailyTrend.total,
+                borderColor: '#1d9bf0',
+                backgroundColor: 'rgba(29, 155, 240, 0.1)',
+                tension: 0.4,
+                fill: true,
+                borderWidth: 2,
+                pointRadius: 3,
+                pointHoverRadius: 5,
+                pointBackgroundColor: '#1d9bf0',
+                pointBorderColor: '#fff',
+                pointBorderWidth: 2
+            }, {
+                label: 'Untriaged',
+                data: dailyTrend.untriaged,
+                borderColor: '#ff6b9d',
+                backgroundColor: 'rgba(255, 107, 157, 0.1)',
+                tension: 0.4,
+                fill: true,
+                borderWidth: 2,
+                pointRadius: 3,
+                pointHoverRadius: 5,
+                pointBackgroundColor: '#ff6b9d',
+                pointBorderColor: '#fff',
+                pointBorderWidth: 2
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: true, position: 'top', labels: { color: '#e1e8ed', font: { size: 11, weight: '600' }, padding: 8, usePointStyle: true, boxWidth: 8, boxHeight: 8 } },
+                tooltip: { backgroundColor: '#1a1f3a', titleColor: '#fff', bodyColor: '#e1e8ed', borderColor: 'rgba(255, 255, 255, 0.1)', borderWidth: 1, padding: 8, displayColors: true, bodyFont: { size: 10 }, titleFont: { size: 10 } }
+            },
+            scales: {
+                x: { grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false }, ticks: { color: '#8899a6', font: { size: 10 } } },
+                y: { beginAtZero: true, grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false }, ticks: { color: '#8899a6', font: { size: 10 }, stepSize: 20 } }
+            }
+        }
+    });
+}
+
+function renderExplorerPieChart(triageBreakdown, summary) {
+    const ctx = document.getElementById('explorerPieChart').getContext('2d');
+    if (chartInstances.explorerPieChart) chartInstances.explorerPieChart.destroy();
+    
+    chartInstances.explorerPieChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: ['Untriaged', 'Test Bug', 'Product Bug', 'Infrastructure'],
+            datasets: [{
+                data: [triageBreakdown.untriaged, triageBreakdown.testBug, triageBreakdown.productBug, triageBreakdown.infrastructure],
+                backgroundColor: ['#ff6b9d', '#ffad1f', '#1d9bf0', '#00d4aa'],
+                borderWidth: 0,
+                borderRadius: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '70%',
+            plugins: {
+                legend: { position: 'bottom', labels: { color: '#e1e8ed', font: { size: 10, weight: '600' }, padding: 8, usePointStyle: true, boxWidth: 8, boxHeight: 8 } },
+                tooltip: { backgroundColor: '#1a1f3a', titleColor: '#fff', bodyColor: '#e1e8ed', borderColor: 'rgba(255, 255, 255, 0.1)', borderWidth: 1, padding: 8, bodyFont: { size: 10 }, titleFont: { size: 10 } }
+            }
+        },
+        plugins: [{
+            beforeDraw: function(chart) {
+                const width = chart.width, height = chart.height, ctx = chart.ctx;
+                ctx.restore();
+                const fontSize = (height / 130).toFixed(2);
+                ctx.font = `bold ${fontSize}em sans-serif`;
+                ctx.textBaseline = 'middle';
+                ctx.fillStyle = '#fff';
+                const text = summary.totalDefects.toString();
+                const textX = Math.round((width - ctx.measureText(text).width) / 2);
+                const textY = height / 2 - 8;
+                ctx.fillText(text, textX, textY);
+                ctx.font = `${fontSize * 0.4}em sans-serif`;
+                ctx.fillStyle = '#8899a6';
+                const subtext = 'Total';
+                const subtextX = Math.round((width - ctx.measureText(subtext).width) / 2);
+                ctx.fillText(subtext, subtextX, textY + 18);
+                ctx.save();
+            }
+        }]
+    });
+}
+
+function renderExplorerBarChart(componentBreakdown) {
+    const ctx = document.getElementById('explorerBarChart').getContext('2d');
+    if (chartInstances.explorerBarChart) chartInstances.explorerBarChart.destroy();
+    
+    chartInstances.explorerBarChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: componentBreakdown.labels,
+            datasets: [{
+                label: 'Untriaged',
+                data: componentBreakdown.untriaged,
+                backgroundColor: '#ff6b9d',
+                borderRadius: 4,
+                barThickness: 15
+            }, {
+                label: 'Test Bugs',
+                data: componentBreakdown.testBugs,
+                backgroundColor: '#ffad1f',
+                borderRadius: 4,
+                barThickness: 15
+            }, {
+                label: 'Product Bugs',
+                data: componentBreakdown.productBugs,
+                backgroundColor: '#1d9bf0',
+                borderRadius: 4,
+                barThickness: 15
+            }, {
+                label: 'Infrastructure',
+                data: componentBreakdown.infraBugs,
+                backgroundColor: '#00d4aa',
+                borderRadius: 4,
+                barThickness: 15
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { position: 'top', labels: { color: '#e1e8ed', font: { size: 10, weight: '600' }, padding: 8, usePointStyle: true, boxWidth: 8, boxHeight: 8 } },
+                tooltip: { backgroundColor: '#1a1f3a', titleColor: '#fff', bodyColor: '#e1e8ed', borderColor: 'rgba(255, 255, 255, 0.1)', borderWidth: 1, padding: 8, bodyFont: { size: 10 }, titleFont: { size: 10 } }
+            },
+            scales: {
+                x: { grid: { display: false }, ticks: { color: '#8899a6', font: { size: 9 } } },
+                y: { beginAtZero: true, grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false }, ticks: { color: '#8899a6', font: { size: 9 } } }
+            }
+        }
+    });
+}
+
+function renderExplorerComparisonChart(data) {
+    const ctx = document.getElementById('explorerComparisonChart').getContext('2d');
+    if (chartInstances.explorerComparisonChart) chartInstances.explorerComparisonChart.destroy();
+    
+    Chart.defaults.color = '#8899a6';
+    Chart.defaults.borderColor = 'rgba(255, 255, 255, 0.05)';
+    
+    chartInstances.explorerComparisonChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: ['This Week'],
+            datasets: [{
+                label: 'Total',
+                data: [data.summary.totalDefects],
+                backgroundColor: '#1d9bf0',
+                borderRadius: 6,
+                barThickness: 50
+            }, {
+                label: 'Untriaged',
+                data: [data.summary.untriaged],
+                backgroundColor: '#ff6b9d',
+                borderRadius: 6,
+                barThickness: 50
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: true, position: 'top', labels: { color: '#e1e8ed', font: { size: 11, weight: '600' }, padding: 10, usePointStyle: true, boxWidth: 8, boxHeight: 8 } },
+                tooltip: { backgroundColor: '#1a1f3a', titleColor: '#fff', bodyColor: '#e1e8ed', borderColor: 'rgba(255, 255, 255, 0.1)', borderWidth: 1, padding: 10, bodyFont: { size: 11 }, titleFont: { size: 11 } }
+            },
+            scales: {
+                x: { grid: { display: false }, ticks: { color: '#e1e8ed', font: { size: 11, weight: '600' } } },
+                y: { beginAtZero: true, grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false }, ticks: { color: '#8899a6', font: { size: 10 } } }
+            }
+        }
+    });
+}
+
+// Tab switching
+document.querySelectorAll('.tab-button').forEach(button => {
+    button.addEventListener('click', () => {
+        const tabName = button.getAttribute('data-tab');
+        
+        // Update active tab button
+        document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+        button.classList.add('active');
+        
+        // Update active tab content
+        document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+        document.getElementById(`${tabName}-tab`).classList.add('active');
+        
+        // Initialize component explorer if switching to it
+        if (tabName === 'explorer') {
+            const grid = document.getElementById('componentGrid');
+            if (!grid.children || grid.children.length === 0) {
+                initializeComponentExplorer();
+            }
+        }
+    });
 });
 
 // Made with Bob

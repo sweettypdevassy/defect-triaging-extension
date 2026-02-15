@@ -190,7 +190,7 @@
 
         .chart-container {
             position: relative;
-            height: 200px;
+            height: 150px;
         }
 
         /* Recent Defects Table - Row 4 */
@@ -200,29 +200,27 @@
             border-radius: 10px;
             padding: 14px;
             backdrop-filter: blur(10px);
-            flex: 1;
-            min-height: 0;
-            display: flex;
-            flex-direction: column;
         }
 
         .table-wrapper {
-            flex: 1;
-            overflow-y: auto;
-            min-height: 0;
+            max-height: 150px;
+            overflow-x: auto;
+            overflow-y: scroll;
+            display: block;
         }
 
         .defects-table {
             width: 100%;
+            min-width: 1200px;
             border-collapse: collapse;
             font-size: 12px;
         }
 
         .defects-table thead {
-            background: rgba(255, 255, 255, 0.02);
+            background: #0a0e27;
             position: sticky;
             top: 0;
-            z-index: 1;
+            z-index: 10;
         }
 
         .defects-table th {
@@ -232,7 +230,7 @@
             color: #8899a6;
             border-bottom: 1px solid rgba(255, 255, 255, 0.05);
             font-size: 12px;
-            background: rgba(255, 255, 255, 0.02);
+            background: #0a0e27;
         }
 
         .defects-table td {
@@ -349,6 +347,143 @@
         ::-webkit-scrollbar-thumb:hover {
             background: rgba(255, 255, 255, 0.15);
         }
+
+        /* Tab Navigation */
+        .tab-navigation {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 10px;
+            padding: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .tab-button {
+            flex: 1;
+            padding: 10px 20px;
+            background: transparent;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 6px;
+            color: #8899a6;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .tab-button:hover {
+            background: rgba(255, 255, 255, 0.05);
+            border-color: rgba(255, 255, 255, 0.2);
+            color: #e1e8ed;
+        }
+
+        .tab-button.active {
+            background: linear-gradient(135deg, rgba(29, 155, 240, 0.2) 0%, rgba(29, 155, 240, 0.1) 100%);
+            border-color: rgba(29, 155, 240, 0.4);
+            color: #1d9bf0;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Component Explorer */
+        .component-explorer {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 12px;
+        }
+
+        .explorer-header {
+            font-size: 16px;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 15px;
+        }
+
+        .component-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin-bottom: 15px;
+            max-height: 300px;
+            overflow-y: auto;
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 6px;
+        }
+
+        .component-checkbox {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-size: 12px;
+        }
+
+        .component-checkbox:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .component-checkbox input[type="checkbox"] {
+            cursor: pointer;
+        }
+
+        .component-checkbox label {
+            cursor: pointer;
+            color: #e1e8ed;
+            user-select: none;
+        }
+
+        .explorer-actions {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .explorer-button {
+            padding: 10px 20px;
+            background: linear-gradient(135deg, #1d9bf0 0%, #0d8bd9 100%);
+            border: none;
+            border-radius: 6px;
+            color: white;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .explorer-button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(29, 155, 240, 0.3);
+        }
+
+        .explorer-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .select-all-btn {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 8px 16px;
+            font-size: 12px;
+        }
+
+        .selected-count {
+            color: #8899a6;
+            font-size: 12px;
+        }
     </style>
 </head>
 <body>
@@ -362,6 +497,19 @@
                 </div>
             </div>
         </div>
+
+        <!-- Tab Navigation -->
+        <div class="tab-navigation">
+            <button class="tab-button active" data-tab="monitored">
+                📍 My Monitored Components
+            </button>
+            <button class="tab-button" data-tab="explorer">
+                🔍 Explore Other Components
+            </button>
+        </div>
+
+        <!-- Monitored Components Tab -->
+        <div id="monitored-tab" class="tab-content active">
 
         <!-- Row 1: KPI Cards -->
         <div class="kpi-row" id="kpiRow">
@@ -405,7 +553,7 @@
         <!-- Row 4: SOE Triage Overdue Defects Table -->
         <div class="table-section">
             <div class="chart-title">⚠️ SOE Triage: Overdue Defects</div>
-            <div class="table-wrapper">
+            <div class="table-wrapper" style="max-height: 150px; overflow-y: scroll; display: block;">
                 <table class="defects-table">
                     <thead>
                         <tr>
@@ -423,6 +571,95 @@
                 </table>
             </div>
         </div>
+        </div>
+        <!-- End Monitored Tab -->
+
+        <!-- Explorer Tab -->
+        <div id="explorer-tab" class="tab-content">
+            <div class="component-explorer">
+                <div class="explorer-header">🔍 Select Components to View</div>
+                <div class="component-grid" id="componentGrid">
+                    <!-- Components will be inserted here -->
+                </div>
+                <div class="explorer-actions">
+                    <button class="explorer-button" id="fetchDataBtn" style="background: linear-gradient(135deg, #00d4aa 0%, #00a885 100%);">🔄 Fetch Latest Data</button>
+                    <button class="explorer-button select-all-btn" id="selectAllBtn">Select All</button>
+                    <button class="explorer-button select-all-btn" id="clearAllBtn">Clear All</button>
+                    <span class="selected-count" id="selectedCount">0 components selected</span>
+                    <button class="explorer-button" id="viewDashboardBtn" disabled>View Dashboard</button>
+                </div>
+            </div>
+
+            <!-- Explorer Dashboard Content (hidden initially) -->
+            <div id="explorerDashboard" style="display: none;">
+                <!-- Back Button -->
+                <div style="margin-bottom: 12px;">
+                    <button class="explorer-button" id="backToSelectionBtn" style="background: linear-gradient(135deg, #8899a6 0%, #657786 100%);">
+                        ← Back to Component Selection
+                    </button>
+                </div>
+                
+                <!-- KPI Cards -->
+                <div class="kpi-row" id="explorerKpiRow"></div>
+
+                <!-- Row 2: Defect Trend + Defect Distribution -->
+                <div class="row-2">
+                    <div class="chart-card">
+                        <div class="chart-title">📈 Defect Trend</div>
+                        <div class="chart-container">
+                            <canvas id="explorerLineChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="chart-card">
+                        <div class="chart-title">📊 Defect Distribution</div>
+                        <div class="chart-container">
+                            <canvas id="explorerPieChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 3: Component Breakdown + Week Comparison -->
+                <div class="row-3">
+                    <div class="chart-card">
+                        <div class="chart-title">📊 Component-wise Defect Status</div>
+                        <div class="chart-container">
+                            <canvas id="explorerBarChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="chart-card">
+                        <div class="chart-title">📊 Week vs Week</div>
+                        <div class="chart-container">
+                            <canvas id="explorerComparisonChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- SOE Triage Table for Explorer -->
+                <div class="chart-card" style="margin-top: 12px;">
+                    <div class="chart-title">⚠️ SOE Triage: Overdue Defects</div>
+                    <div class="table-wrapper" style="max-height: 160px; overflow-y: auto; display: block;">
+                        <table class="defects-table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Summary</th>
+                                    <th>Functional Area</th>
+                                    <th>Filed Against</th>
+                                    <th>Creation Date</th>
+                                    <th>Owned By</th>
+                                </tr>
+                            </thead>
+                            <tbody id="explorerDefectsTableBody">
+                                <!-- Defects will be inserted here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <!-- End Explorer Tab -->
     </div>
 
     <script src="dashboard.js"></script>

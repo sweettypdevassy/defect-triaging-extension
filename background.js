@@ -652,6 +652,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
   
+  if (request.action === 'fetchAllComponentsData') {
+    console.log('📊 Manual all components data fetch triggered');
+    storeAllComponentsData().then(() => {
+      sendResponse({ success: true });
+    }).catch(error => {
+      sendResponse({ success: false, error: error.message });
+    });
+    return true;
+  }
+  
   if (request.action === 'testAutoLogin') {
     console.log('🧪 Manual auto-login test triggered from popup');
     attemptAutoLogin().then(() => {
@@ -894,6 +904,141 @@ async function storeDailySnapshot(componentDefectsMap, totalDefects) {
     console.error('Error storing daily snapshot:', error);
   }
 }
+// Store data for ALL components (for component explorer feature)
+async function storeAllComponentsData() {
+  try {
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+    
+    // List of ALL available components
+    const allComponents = [
+      'AdminCenter', 'App Client', 'Async Scheduling (Persistent Executor, CommonJ)',
+      'Batch', 'Bean Validation', 'Build', 'CDI', 'Classloading',
+      'Cloud/Virtualization', 'Core Security', 'Database (jdbc, oracle, db2, derby)',
+      'Docs', 'Dynacache', 'EE / MP Concurrency', 'EJB Container', 'IIOP/ORB',
+      'IBM i', 'Install', 'InstantOn', 'Intelligent Management', 'JAX-RS',
+      'Jakarta Data', 'Java EE Platform', 'JCA', 'JPA', 'JSON',
+      'Kernel/Bootstrap', 'MCP', 'Messaging', 'MicroProfile Core (config, fault tolerance, reactive)',
+      'MicroProfile GraphQL', 'MicroProfile Observability (metrics, open tracing, health)',
+      'MicroProfile Open API', 'MicroProfile REST Client', 'Mongo', 'OSGi Applications',
+      'Observability', 'Real-Time Comm (WebRTC, SIP)', 'Repository', 'Security SSO (jwt, oauth, oidc, social, mpjwt, saml)',
+      'Spring Boot', 'Systems Management', 'Transactions', 'Transport (cfw, http, ssl, websockets)',
+      'Usage Metering', 'WAS on Cloud', 'Web Comps (servlet, httpsession, jsp, jsf, etc)',
+      'Web Services', 'Web Services Security', 'WebSphere Automation', 'z/OS'
+    ];
+    
+    // Get existing all components data
+    const result = await chrome.storage.local.get(['allComponentsSnapshots']);
+    const allSnapshots = result.allComponentsSnapshots || {};
+    
+    // Initialize today's snapshot if not exists
+    if (!allSnapshots[today]) {
+      allSnapshots[today] = {};
+    }
+    
+    console.log(`📊 Collecting data for ${allComponents.length} components...`);
+    
+    // Fetch data for each component
+    for (const componentName of allComponents) {
+      const apiUrl = `https://libh-proxy1.fyre.ibm.com/buildBreakReport/rest2/defects/buildbreak/fas?fas=${encodeURIComponent(componentName)}`;
+      
+      try {
+        const response = await fetch(apiUrl, {
+          credentials: 'include',
+          headers: { 'Accept': 'application/json' }
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          const allDefects = Array.isArray(data) ? data : (data.defects || []);
+          
+          let untriaged = 0;
+          let testBugs = 0;
+          let productBugs = 0;
+          let infraBugs = 0;
+          
+          allDefects.forEach(defect => {
+            const triageTags = (defect.triageTags || defect.tags || []);
+            const tagsArray = Array.isArray(triageTags) ? triageTags : [];
+            
+            const hasTriagedTag = tagsArray.some(tag => {
+              const lowerTag = tag.toLowerCase();
+              return lowerTag.includes('test_bug') ||
+                     lowerTag.includes('product_bug') ||
+                     lowerTag.includes('infrastructure_bug') ||
+                     lowerTag === 'test' ||
+                     lowerTag === 'product' ||
+                     lowerTag === 'infrastructure';
+            });
+            
+            if (!hasTriagedTag) {
+              untriaged++;
+            } else {
+              const hasTestTag = tagsArray.some(tag => {
+                const lowerTag = tag.toLowerCase();
+                return lowerTag.includes('test_bug') || lowerTag === 'test';
+              });
+              const hasProductTag = tagsArray.some(tag => {
+                const lowerTag = tag.toLowerCase();
+                return lowerTag.includes('product_bug') || lowerTag === 'product';
+              });
+              const hasInfraTag = tagsArray.some(tag => {
+                const lowerTag = tag.toLowerCase();
+                return lowerTag.includes('infrastructure_bug') || lowerTag === 'infrastructure';
+              });
+              
+              if (hasTestTag) {
+                testBugs++;
+              } else if (hasProductTag) {
+                productBugs++;
+              } else if (hasInfraTag) {
+                infraBugs++;
+              }
+            }
+          });
+          
+          // Store component data
+          allSnapshots[today][componentName] = {
+            total: allDefects.length,
+            untriaged: untriaged,
+            testBugs: testBugs,
+            productBugs: productBugs,
+            infraBugs: infraBugs
+          };
+          
+          console.log(`✓ ${componentName}: ${allDefects.length} defects`);
+        }
+      } catch (error) {
+        console.error(`Error fetching ${componentName}:`, error);
+        // Store empty data on error
+        allSnapshots[today][componentName] = {
+          total: 0,
+          untriaged: 0,
+          testBugs: 0,
+          productBugs: 0,
+          infraBugs: 0
+        };
+      }
+      
+      // Small delay to avoid overwhelming the API
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    
+    // Keep only last 14 days of snapshots
+    const dates = Object.keys(allSnapshots).sort();
+    if (dates.length > 14) {
+      const toDelete = dates.slice(0, dates.length - 14);
+      toDelete.forEach(date => delete allSnapshots[date]);
+    }
+    
+    // Save all components snapshots
+    await chrome.storage.local.set({ allComponentsSnapshots: allSnapshots });
+    console.log(`✅ All components data stored for ${today}`);
+    
+  } catch (error) {
+    console.error('Error storing all components data:', error);
+  }
+}
+
 
 // Generate weekly dashboard data
 async function generateWeeklyDashboard() {
@@ -1438,31 +1583,19 @@ async function parseJazzWorkItems(data, componentNames) {
         (ownerRaw.title || ownerRaw.name || ownerRaw.label || 'Unassigned') :
         (ownerRaw || 'Unassigned');
       
-      // Filter by monitored components using Functional Area field
-      const functionalAreaStr = String(functionalArea).toLowerCase();
-      
+      // Include ALL SOE Triage defects (not filtered by monitored components)
+      // These are critical overdue defects that should always be visible
       console.log(`Defect ${id}: functionalArea="${functionalArea}", filedAgainst="${filedAgainst}"`);
       
-      const shouldInclude = componentNames.length === 0 ||
-                           componentNames.some(comp => {
-                             const match = functionalAreaStr.includes(comp.toLowerCase());
-                             if (match) console.log(`  ✓ Matched component: ${comp}`);
-                             return match;
-                           });
-      
-      console.log(`  shouldInclude: ${shouldInclude}`);
-      
-      if (shouldInclude) {
-        workItems.push({
-          id: id,
-          summary: summary,
-          functionalArea: functionalArea,
-          filedAgainst: filedAgainst,
-          creationDate: formattedDate,
-          ownedBy: ownedBy,
-          description: description
-        });
-      }
+      workItems.push({
+        id: id,
+        summary: summary,
+        functionalArea: functionalArea,
+        filedAgainst: filedAgainst,
+        creationDate: formattedDate,
+        ownedBy: ownedBy,
+        description: description
+      });
     }
     
   } catch (error) {
@@ -1958,6 +2091,8 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'dailyDefectCheck') {
     console.log('Daily defect check triggered');
     await checkDefects();
+    // Also collect data for all components (for component explorer)
+    await storeAllComponentsData();
   } else if (alarm.name === 'keepSessionAlive') {
     console.log('Session keepalive triggered');
     await keepSessionAlive();
