@@ -5,7 +5,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   
   // Set up event listeners
   document.getElementById('checkNowBtn').addEventListener('click', checkNow);
-  document.getElementById('testLoginBtn').addEventListener('click', testAutoLogin);
+  document.getElementById('pauseToggle').addEventListener('change', togglePause);
   document.getElementById('dashboardBtn').addEventListener('click', openDashboard);
   document.getElementById('optionsBtn').addEventListener('click', openOptions);
 });
@@ -15,6 +15,7 @@ async function loadStatus() {
   try {
     const config = await chrome.storage.sync.get({
       enabled: true,
+      paused: false,
       componentName: 'Messaging',
       checkTime: '10:00',
       lastCheck: null,
@@ -24,8 +25,18 @@ async function loadStatus() {
     // Update status
     const statusDiv = document.getElementById('status');
     const statusText = document.getElementById('statusText');
+    const pauseToggle = document.getElementById('pauseToggle');
+    const toggleLabel = document.getElementById('toggleLabel');
     
-    if (config.enabled && config.slackWebhookUrl) {
+    // Update toggle switch
+    pauseToggle.checked = !config.paused;
+    toggleLabel.textContent = config.paused ? 'OFF' : 'ON';
+    toggleLabel.style.color = config.paused ? '#dc3545' : '#28a745';
+    
+    if (config.paused) {
+      statusDiv.className = 'status disabled';
+      statusText.textContent = 'Paused';
+    } else if (config.enabled && config.slackWebhookUrl) {
       statusDiv.className = 'status enabled';
       statusText.textContent = 'Active';
     } else if (!config.slackWebhookUrl) {
@@ -77,52 +88,6 @@ async function checkNow() {
   }
 }
 
-// Test auto-login functionality
-async function testAutoLogin() {
-  const button = document.getElementById('testLoginBtn');
-  button.disabled = true;
-  button.textContent = '🔐 Testing...';
-  
-  try {
-    // Check if credentials are configured
-    const config = await chrome.storage.sync.get({
-      ibmUsername: '',
-      ibmPassword: '',
-      autoLogin: true
-    });
-    
-    if (!config.ibmUsername || !config.ibmPassword) {
-      showMessage('⚠️ Please configure IBM credentials in Settings first!', 'error');
-      button.disabled = false;
-      button.textContent = '🔐 Test Auto-Login';
-      return;
-    }
-    
-    if (!config.autoLogin) {
-      showMessage('⚠️ Auto-login is disabled. Enable it in Settings.', 'error');
-      button.disabled = false;
-      button.textContent = '🔐 Test Auto-Login';
-      return;
-    }
-    
-    showMessage('🔍 Checking VPN connection...', 'success');
-    
-    // Trigger auto-login test
-    const response = await chrome.runtime.sendMessage({ action: 'testAutoLogin' });
-    
-    if (response.success) {
-      showMessage('✓ Auto-login test successful! Check console for details.', 'success');
-    } else {
-      showMessage('✗ Auto-login test failed: ' + response.error, 'error');
-    }
-  } catch (error) {
-    showMessage('✗ Error: ' + error.message, 'error');
-  } finally {
-    button.disabled = false;
-    button.textContent = '🔐 Test Auto-Login';
-  }
-}
-
 // Open options page
 function openOptions() {
   chrome.runtime.openOptionsPage();
@@ -147,6 +112,44 @@ async function openDashboard() {
   } finally {
     button.disabled = false;
     button.textContent = '📊 View Weekly Dashboard';
+  }
+}
+
+// Toggle pause/resume
+async function togglePause() {
+  const pauseToggle = document.getElementById('pauseToggle');
+  const toggleLabel = document.getElementById('toggleLabel');
+  
+  pauseToggle.disabled = true;
+  
+  try {
+    const newPausedState = !pauseToggle.checked;
+    
+    // Send message to background script
+    const action = newPausedState ? 'pauseExtension' : 'resumeExtension';
+    const response = await chrome.runtime.sendMessage({ action });
+    
+    if (response && response.success) {
+      // Update toggle label
+      toggleLabel.textContent = newPausedState ? 'OFF' : 'ON';
+      toggleLabel.style.color = newPausedState ? '#dc3545' : '#28a745';
+      
+      showMessage(`${newPausedState ? '⏸️ Extension paused' : '▶️ Extension resumed'} - ${newPausedState ? 'all checks stopped' : 'checks restarted'}`, 'success');
+      
+      // Reload status to reflect changes
+      await loadStatus();
+    } else {
+      // Revert toggle if failed
+      pauseToggle.checked = !pauseToggle.checked;
+      showMessage('✗ Failed to toggle: ' + (response?.error || 'Unknown error'), 'error');
+    }
+  } catch (error) {
+    console.error('Error toggling pause:', error);
+    // Revert toggle on error
+    pauseToggle.checked = !pauseToggle.checked;
+    showMessage('✗ Error: ' + error.message, 'error');
+  } finally {
+    pauseToggle.disabled = false;
   }
 }
 

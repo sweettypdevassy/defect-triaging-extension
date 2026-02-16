@@ -551,18 +551,19 @@ async function renderRecentDefects(data) {
     // Filter defects by monitored components only (for "My Monitored Components" tab)
     const soeTriageDefects = allDefects.filter(defect => {
         const match = monitoredComponentNames.some(compName => {
-            const compLower = compName.toLowerCase();
-            const functionalAreaLower = (defect.functionalArea || '').toLowerCase();
-            const filedAgainstLower = (defect.filedAgainst || '').toLowerCase();
+            const compLower = compName.toLowerCase().trim();
+            const functionalAreaLower = (defect.functionalArea || '').toLowerCase().trim();
+            const filedAgainstLower = (defect.filedAgainst || '').toLowerCase().trim();
             
             console.log(`Checking "${compName}" against defect ${defect.id}:`, {
                 functionalArea: defect.functionalArea,
                 filedAgainst: defect.filedAgainst,
-                matchFA: functionalAreaLower.includes(compLower),
-                matchFiled: filedAgainstLower.includes(compLower)
+                matchFA: functionalAreaLower === compLower,
+                matchFiled: filedAgainstLower === compLower
             });
             
-            return functionalAreaLower.includes(compLower) || filedAgainstLower.includes(compLower);
+            // Use exact match instead of partial match
+            return functionalAreaLower === compLower || filedAgainstLower === compLower;
         });
         return match;
     });
@@ -844,14 +845,12 @@ async function renderExplorerSOETriageTable(components) {
     // Filter defects for selected components
     const filteredDefects = allDefects.filter(defect =>
         components.some(comp => {
-            const compLower = comp.toLowerCase();
-            const filedAgainstLower = (defect.filedAgainst || '').toLowerCase();
-            const functionalAreaLower = (defect.functionalArea || '').toLowerCase();
+            const compLower = comp.toLowerCase().trim();
+            const filedAgainstLower = (defect.filedAgainst || '').toLowerCase().trim();
+            const functionalAreaLower = (defect.functionalArea || '').toLowerCase().trim();
             
-            // Check component name in filed against OR functional area
-            return filedAgainstLower.includes(compLower) ||
-                   functionalAreaLower.includes(compLower) ||
-                   compLower.includes(filedAgainstLower.split('/')[0].trim().toLowerCase());
+            // Use exact match for component filtering
+            return filedAgainstLower === compLower || functionalAreaLower === compLower;
         })
     );
     

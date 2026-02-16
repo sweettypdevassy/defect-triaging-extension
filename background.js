@@ -8,9 +8,13 @@ const DEFAULT_CONFIG = {
   slackWebhookUrl: '',
   componentName: 'Messaging',
   checkTime: '10:00', // 10:00 AM
+  weeklyDashboardTime: '11:00', // 11:00 AM Monday
   enabled: true,
+  paused: false, // New: pause/resume functionality
   lastCheck: null,
-  vpnConnected: false
+  lastDataCollection: null, // Track when data was last collected
+  vpnConnected: false,
+  retryingConnection: false // Track if we're in retry mode
 };
 
 // Initialize extension
@@ -18,7 +22,7 @@ chrome.runtime.onInstalled.addListener(async () => {
   console.log('Defect Triaging Notifier installed');
   
   // Clear error notification history on extension reload
-  await chrome.storage.local.remove(['lastErrorNotified', 'lastErrorMessage']);
+  await chrome.storage.local.remove(['lastErrorNotified', 'lastErrorMessage', 'retryingConnection']);
   console.log('🔄 Cleared error notification history - fresh notifications enabled');
   
   // Load or set default configuration
@@ -27,33 +31,39 @@ chrome.runtime.onInstalled.addListener(async () => {
     await chrome.storage.sync.set(DEFAULT_CONFIG);
   }
   
+  // Check for missed schedules
+  await checkForMissedScheduledCheck();
+  
   // Set up daily alarm
   setupDailyAlarm();
-  
-  // Set up session keepalive
-  setupSessionKeepalive();
   
   // Set up weekly dashboard
   console.log('Setting up weekly dashboard...');
   await setupWeeklyDashboardAlarm();
   
-  // Set up SOE Triage fetch
-  console.log('Setting up SOE Triage fetch...');
-  await setupSOETriageFetch();
-  
-  // Set up VPN detection and auto-login
-  setupVPNDetection();
+  console.log('✓ Extension initialized - SOE Triage and data collection will run during scheduled checks');
 });
 
 // Handle Chrome startup - check for missed scheduled checks
 chrome.runtime.onStartup.addListener(async () => {
   console.log('Chrome started - checking for missed scheduled checks...');
   
+  // Clear existing alarms first to prevent immediate firing
+  await chrome.alarms.clearAll();
+  console.log('✓ Cleared all existing alarms');
+  
   // Clear any stuck flags from previous session
-  await chrome.storage.local.remove(['loginInProgress', 'checkInProgress']);
+  await chrome.storage.local.remove(['loginInProgress', 'checkInProgress', 'dataCollectionInProgress', 'retryingConnection']);
   console.log('✓ Cleared stuck flags from previous session');
   
+  // Check for missed schedules first
   await checkForMissedScheduledCheck();
+  
+  // Wait a bit before setting up alarms to avoid duplicate triggers
+  setTimeout(async () => {
+    await setupDailyAlarm();
+    await setupWeeklyDashboardAlarm();
+  }, 2000);
 });
 
 // Get configuration from storage
@@ -62,16 +72,16 @@ async function getConfig() {
   return result;
 }
 
-// Set up daily alarm for checking defects
+// Set up daily alarm for checking defects (skips weekends)
 async function setupDailyAlarm() {
   const config = await getConfig();
   
-  if (!config.enabled) {
-    console.log('Automation is disabled');
+  if (!config.enabled || config.paused) {
+    console.log('Automation is disabled or paused');
     return;
   }
   
-  // Clear only the daily alarm (not keepalive)
+  // Clear existing alarm
   await chrome.alarms.clear('dailyDefectCheck');
   
   // Parse check time (format: "HH:MM")
@@ -87,6 +97,14 @@ async function setupDailyAlarm() {
     nextCheck.setDate(nextCheck.getDate() + 1);
   }
   
+  // Skip weekends - move to next Monday if needed
+  const dayOfWeek = nextCheck.getDay();
+  if (dayOfWeek === 0) { // Sunday
+    nextCheck.setDate(nextCheck.getDate() + 1); // Move to Monday
+  } else if (dayOfWeek === 6) { // Saturday
+    nextCheck.setDate(nextCheck.getDate() + 2); // Move to Monday
+  }
+  
   const delayInMinutes = (nextCheck - now) / (1000 * 60);
   
   // Create alarm
@@ -95,71 +113,66 @@ async function setupDailyAlarm() {
     periodInMinutes: 24 * 60 // Repeat every 24 hours
   });
   
-  console.log(`Next defect check scheduled for: ${nextCheck.toLocaleString()}`);
+  console.log(`📅 Next defect check scheduled for: ${nextCheck.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`);
 }
 
-// Set up session keepalive to prevent IBM session expiry
-async function setupSessionKeepalive() {
-  // Clear existing alarms
-  await chrome.alarms.clear('keepSessionAlive');
-  await chrome.alarms.clear('autoRetryCheck');
+// Handle connection errors with retry logic
+async function handleConnectionError(error) {
+  const storage = await chrome.storage.local.get(['retryingConnection', 'retryAttempts', 'retryStartTime']);
   
-  // Create alarm to refresh session every 2 hours (reduces API calls)
-  chrome.alarms.create('keepSessionAlive', {
-    delayInMinutes: 1, // Start after 1 minute
-    periodInMinutes: 120 // Repeat every 2 hours
-  });
-  
-  // Create separate alarm for quick auto-retry check (every 1 minute)
-  chrome.alarms.create('autoRetryCheck', {
-    delayInMinutes: 0.5, // Start after 30 seconds
-    periodInMinutes: 1 // Check every 1 minute for auto-retry
-  });
-  
-  console.log('Session keepalive enabled - will refresh IBM session every 2 hours');
-  console.log('Auto-retry check enabled - will check for login every 1 minute');
-}
-
-// Keep IBM session alive by making a lightweight request
-async function keepSessionAlive() {
-  try {
-    console.log('🔔 Keepalive triggered at:', new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }));
+  if (!storage.retryingConnection) {
+    // First error - notify Slack
+    console.error('❌ Connection error - starting retry attempts:', error.message);
     
-    // Make a lightweight HEAD request to keep session alive
-    const response = await fetch('https://libh-proxy1.fyre.ibm.com/buildBreakReport/', {
-      method: 'HEAD',
-      credentials: 'include', // Include cookies
-      cache: 'no-cache'
+    // Get webhook URL and send error notification
+    const config = await getConfig();
+    if (config.slackWebhookUrl) {
+      await sendErrorNotification(config.slackWebhookUrl, error);
+    }
+    
+    await chrome.storage.local.set({
+      retryingConnection: true,
+      retryAttempts: 0,
+      retryStartTime: Date.now()
     });
     
-    if (response.ok) {
-      console.log('✓ IBM session keepalive successful');
-    } else {
-      console.log('⚠️ IBM session keepalive returned status:', response.status);
-    }
-  } catch (error) {
-    // Silently handle network errors (expected when not on VPN or system is down)
-    // Only log if it's not a network error
-    if (!error.message.includes('Failed to fetch')) {
-      console.error('Session keepalive error:', error.message);
-    }
-    // Don't throw - this is a background task
+    // Start retry alarm (every 30 seconds)
+    await chrome.alarms.create('connectionRetry', {
+      delayInMinutes: 0.5,
+      periodInMinutes: 0.5
+    });
+    
+    console.log('🔄 Retry alarm set - will retry every 30 seconds');
+  } else {
+    // Already retrying - just log
+    const attempts = (storage.retryAttempts || 0) + 1;
+    console.log(`🔄 Retry attempt ${attempts} failed, will retry in 30 seconds...`);
   }
 }
 
-// Quick check for auto-retry without making API calls
-async function checkForAutoRetry() {
+// Retry connection after error
+async function retryConnection() {
   try {
-    // Check if we had a previous login error
-    const storage = await chrome.storage.local.get(['lastLoginError']);
-    if (storage.lastLoginError) {
-      console.log('🔍 Auto-retry check: Login error detected, attempting defect check...');
-      await chrome.storage.local.remove(['lastLoginError']);
-      // Trigger defect check which will auto-retry
-      await checkDefects();
-    }
+    const storage = await chrome.storage.local.get(['retryAttempts']);
+    const attempts = (storage.retryAttempts || 0) + 1;
+    
+    console.log(`🔄 Connection retry attempt ${attempts}...`);
+    await chrome.storage.local.set({ retryAttempts: attempts });
+    
+    // Try to collect all data (silent retry - no error notifications)
+    await collectAllData();
+    
+    // Success - stop retrying
+    await chrome.storage.local.set({
+      retryingConnection: false,
+      retryAttempts: 0
+    });
+    await chrome.alarms.clear('connectionRetry');
+    
+    console.log(`✅ Connection restored after ${attempts} attempt(s) - data collection resumed`);
   } catch (error) {
-    console.error('Auto-retry check error:', error.message);
+    // Still failing - will retry on next alarm (silent, no notification)
+    console.log(`❌ Retry attempt failed: ${error.message} - will retry in 30 seconds...`);
   }
 }
 
@@ -168,8 +181,8 @@ async function checkForMissedScheduledCheck() {
   try {
     const config = await getConfig();
     
-    if (!config.enabled) {
-      console.log('Automation is disabled');
+    if (!config.enabled || config.paused) {
+      console.log('Automation is disabled or paused - skipping missed check');
       return;
     }
     
@@ -200,22 +213,25 @@ async function checkForMissedScheduledCheck() {
     const missedYesterdayCheck = !lastCheck || lastCheck < scheduledTimeYesterday;
     
     if (missedTodayCheck) {
-      console.log('⚠️ Missed today\'s scheduled check - running now...');
+      console.log('⚠️ Missed today\'s scheduled check - running now with notification...');
       // Clear any login error flags to prevent duplicate checks
       await chrome.storage.local.remove(['lastLoginError', 'checkInProgress']);
-      await checkDefects();
+      await collectAllData(false, false); // Not forced, not silent - send notification
     } else if (missedYesterdayCheck && now < scheduledTimeToday) {
       // If we haven't checked since yesterday and today's check hasn't happened yet
-      console.log('⚠️ Missed yesterday\'s scheduled check - running now...');
+      // Collect data silently for dashboard trends, but don't send notification
+      console.log('⚠️ Missed yesterday\'s scheduled check - collecting data silently for dashboard...');
       // Clear any login error flags to prevent duplicate checks
       await chrome.storage.local.remove(['lastLoginError', 'checkInProgress']);
-      await checkDefects();
+      await collectAllData(false, true); // Not forced, but silent - no notification
     } else {
       console.log('✓ No missed checks detected');
     }
     
   } catch (error) {
     console.error('Error checking for missed scheduled checks:', error);
+    // Send error notification to Slack
+    await handleConnectionError(error);
   }
 }
 
@@ -346,8 +362,100 @@ async function sendErrorNotification(webhookUrl, error) {
   console.log('Error notification sent to Slack');
 }
 
+// Collect all data from both sources (Jazz/RTC and Build Break Report)
+async function collectAllData(force = false, silent = false) {
+  console.log(silent ? '📊 Starting silent data collection (no Slack notification)...' : '📊 Starting comprehensive data collection...');
+  
+  try {
+    // Check if data collection is already in progress
+    const status = await chrome.storage.local.get(['dataCollectionInProgress']);
+    
+    if (status.dataCollectionInProgress) {
+      console.log('⚠️ Data collection already in progress, skipping duplicate request');
+      return;
+    }
+    
+    // Set flag to prevent concurrent collections
+    await chrome.storage.local.set({ dataCollectionInProgress: true });
+    
+    // Check VPN connection first
+    await checkVPNConnection();
+    
+    // 1. Fetch Build Break Report defects FIRST (fast - sends notification quickly)
+    console.log('📋 Fetching Build Break Report defects...');
+    try {
+      await checkDefects(silent);
+      console.log('✅ Monitored components notification sent');
+    } catch (error) {
+      // Check if this is a login error
+      const isLoginError = error.message && error.message.includes('Not logged in');
+      
+      if (isLoginError) {
+        console.log('🔑 Login required for Build Break Report - triggering login...');
+        await chrome.storage.local.set({ needsMonitoredComponentsRetry: true });
+        await attemptAutoLogin();
+        
+        // Wait for login to complete, then retry checkDefects
+        console.log('⏳ Waiting for login to complete...');
+        
+        // Poll for login completion (check every second for up to 60 seconds)
+        let loginCompleted = false;
+        for (let i = 0; i < 60; i++) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          const loginStatus = await chrome.storage.local.get(['loginInProgress']);
+          if (!loginStatus.loginInProgress) {
+            loginCompleted = true;
+            break;
+          }
+        }
+        
+        if (loginCompleted) {
+          console.log('🔄 Retrying monitored components check after login...');
+          // Clear the checkInProgress flag before retrying
+          await chrome.storage.local.remove(['checkInProgress']);
+          
+          // Add a small delay to ensure cookies are fully propagated
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          
+          await checkDefects(silent);
+          await chrome.storage.local.remove(['needsMonitoredComponentsRetry']);
+          console.log('✅ Monitored components notification sent after login');
+        } else {
+          console.log('⏭️ Login timeout - will retry on next scheduled check');
+          throw error; // Stop here, don't proceed to SOE/51 components
+        }
+      } else {
+        throw error; // Other errors, propagate up
+      }
+    }
+    
+    // 2. Fetch Jazz/RTC SOE Triage defects (slower)
+    console.log('📋 Fetching SOE Triage defects from Jazz/RTC...');
+    const soeDefects = await fetchSOETriageDefects();
+    console.log(`✓ Fetched ${soeDefects ? soeDefects.length : 0} SOE Triage defects`);
+    
+    // 3. Collect data for all components (slowest - for component explorer)
+    console.log('📋 Collecting all components data...');
+    await storeAllComponentsData();
+    
+    // 4. Store collection timestamp
+    await chrome.storage.local.set({
+      lastDataCollection: Date.now(),
+      dataCollectionInProgress: false
+    });
+    
+    console.log('✅ Data collection complete at:', new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }));
+    
+  } catch (error) {
+    console.error('❌ Data collection failed:', error);
+    // Clear the in-progress flag on error
+    await chrome.storage.local.set({ dataCollectionInProgress: false });
+    throw error;
+  }
+}
+
 // Main function to check defects and send notification
-async function checkDefects() {
+async function checkDefects(silent = false) {
   try {
     // Prevent duplicate simultaneous checks
     const checkStatus = await chrome.storage.local.get(['checkInProgress']);
@@ -358,7 +466,7 @@ async function checkDefects() {
     
     // Set flag to indicate check is in progress
     await chrome.storage.local.set({ checkInProgress: true });
-    console.log('🔒 Check started - flag set');
+    console.log(silent ? '🔒 Silent check started - flag set' : '🔒 Check started - flag set');
     
     const config = await getConfig();
     
@@ -443,8 +551,13 @@ async function checkDefects() {
     // Store daily snapshot for weekly dashboard
     await storeDailySnapshot(componentDefectsMap, totalDefects);
     
-    // Send Slack notification grouped by component
-    await sendSlackNotificationGrouped(config.slackWebhookUrl, componentDefectsMap, totalDefects);
+    // Send Slack notification grouped by component (unless silent mode)
+    if (!silent) {
+      await sendSlackNotificationGrouped(config.slackWebhookUrl, componentDefectsMap, totalDefects);
+      console.log('✅ Defect check complete - Slack notification sent');
+    } else {
+      console.log('✅ Silent defect check complete - data stored without notification');
+    }
     
     // Update last check time
     await chrome.storage.sync.set({ lastCheck: new Date().toISOString() });
@@ -453,15 +566,7 @@ async function checkDefects() {
     await chrome.storage.local.remove(['checkInProgress']);
     console.log('🔓 Check completed - flag cleared');
     
-    console.log('✅ Defect check complete - Slack notification sent');
-    
-    // Check if we need to retry all components data collection
-    const retryStatus = await chrome.storage.local.get(['needsDataRetry']);
-    if (retryStatus.needsDataRetry) {
-      console.log('🔄 Retrying all components data collection after successful check...');
-      await chrome.storage.local.remove(['needsDataRetry']);
-      await storeAllComponentsData();
-    }
+    // Data collection successful - no retry needed
     
   } catch (error) {
     // Clear the check-in-progress flag on error too
@@ -473,16 +578,9 @@ async function checkDefects() {
     const isLoginError = error.message && error.message.includes('Not logged in');
     
     if (isLoginError) {
-      // Login required - trigger auto-login flow (NO Slack notification for login errors)
-      console.log('🔑 Login required - triggering auto-login flow...');
-      await chrome.storage.local.set({
-        lastLoginError: new Date().toISOString(),
-        needsDataRetry: true  // Mark that we need to retry data collection after login
-      });
-      
-      // Trigger auto-login to open the login page
-      await attemptAutoLogin();
-      console.log('✓ attemptAutoLogin() completed');
+      // Login error - let collectAllData() handle the retry
+      console.log('🔑 Login required - propagating error to collectAllData() for retry...');
+      throw error; // Propagate to collectAllData()'s retry logic
     } else {
       // Other errors (network issues, etc.) - send to Slack with duplicate suppression
       const errorKey = error.message || 'unknown_error';
@@ -653,16 +751,31 @@ async function sendSlackNotification(webhookUrl, componentName, defects) {
 // Listen for messages from popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'checkNow') {
-    checkDefects().then(() => {
-      sendResponse({ success: true });
-    }).catch(error => {
-      sendResponse({ success: false, error: error.message });
-    });
+    // Collect all data (Jazz + Build Break Report) and send both notifications
+    // Use force=true to bypass duplicate check for demos/testing
+    collectAllData(true)
+      .then(() => {
+        // Wait a moment for data to be stored
+        return new Promise(resolve => setTimeout(resolve, 1500));
+      })
+      .then(() => {
+        // Send weekly dashboard with fresh data
+        return sendWeeklyDashboardNotification();
+      })
+      .then(() => {
+        sendResponse({ success: true });
+      })
+      .catch(error => {
+        sendResponse({ success: false, error: error.message });
+      });
     return true; // Keep channel open for async response
   }
   
   if (request.action === 'updateSchedule') {
-    setupDailyAlarm().then(() => {
+    Promise.all([
+      setupDailyAlarm(),
+      setupWeeklyDashboardAlarm()
+    ]).then(() => {
       sendResponse({ success: true });
     }).catch(error => {
       sendResponse({ success: false, error: error.message });
@@ -711,6 +824,29 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
   
+  if (request.action === 'pauseExtension') {
+    chrome.alarms.clearAll().then(async () => {
+      await chrome.storage.sync.set({ paused: true });
+      console.log('⏸️ Extension paused - all alarms cleared');
+      sendResponse({ success: true });
+    }).catch(error => {
+      sendResponse({ success: false, error: error.message });
+    });
+    return true;
+  }
+  
+  if (request.action === 'resumeExtension') {
+    chrome.storage.sync.set({ paused: false }).then(async () => {
+      await setupDailyAlarm();
+      await setupWeeklyDashboardAlarm();
+      console.log('▶️ Extension resumed - alarms restarted');
+      sendResponse({ success: true });
+    }).catch(error => {
+      sendResponse({ success: false, error: error.message });
+    });
+    return true;
+  }
+  
   if (request.action === 'testAutoLogin') {
     console.log('🧪 Manual auto-login test triggered from popup');
     attemptAutoLogin().then(() => {
@@ -738,31 +874,48 @@ async function setupWeeklyDashboardAlarm() {
   // Clear existing weekly alarm
   await chrome.alarms.clear('weeklyDashboard');
   
-  // Calculate next Monday 11:00 AM IST
+  // Parse the configured time (format: "HH:MM")
+  const [hours, minutes] = (config.weeklyDashboardTime || '11:00').split(':').map(Number);
+  
+  // Calculate next Monday at configured time IST
   const now = new Date();
   const nextMonday = new Date();
   
-  // Set to 11:00 AM
-  nextMonday.setHours(11, 0, 0, 0);
+  // Set to configured time
+  nextMonday.setHours(hours, minutes, 0, 0);
   
-  // Find next Monday
-  const daysUntilMonday = (8 - now.getDay()) % 7 || 7;
-  nextMonday.setDate(now.getDate() + daysUntilMonday);
+  // Find next Monday (day 1)
+  const currentDay = now.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+  let daysUntilMonday;
   
-  // If it's Monday and time has passed, schedule for next Monday
-  if (now.getDay() === 1 && now.getHours() >= 11) {
-    nextMonday.setDate(nextMonday.getDate() + 7);
+  if (currentDay === 0) {
+    // Sunday - next Monday is tomorrow
+    daysUntilMonday = 1;
+  } else if (currentDay === 1) {
+    // Monday - check if time has passed
+    if (now.getHours() > hours || (now.getHours() === hours && now.getMinutes() >= minutes)) {
+      // Time has passed, schedule for next Monday
+      daysUntilMonday = 7;
+    } else {
+      // Time hasn't passed yet, schedule for today
+      daysUntilMonday = 0;
+    }
+  } else {
+    // Tuesday to Saturday - calculate days until next Monday
+    daysUntilMonday = (8 - currentDay) % 7;
   }
+  
+  nextMonday.setDate(now.getDate() + daysUntilMonday);
   
   const delayInMinutes = (nextMonday - now) / (1000 * 60);
   
-  // Create alarm for Monday 11 AM, repeat weekly
+  // Create alarm for Monday at configured time, repeat weekly
   chrome.alarms.create('weeklyDashboard', {
     delayInMinutes: delayInMinutes,
     periodInMinutes: 7 * 24 * 60 // Repeat every 7 days
   });
   
-  console.log(`📅 Next weekly dashboard scheduled for: ${nextMonday.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`);
+  console.log(`📅 Next weekly dashboard scheduled for: ${nextMonday.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} (${config.weeklyDashboardTime || '11:00'})`);
 }
 
 // Store daily defect snapshot for weekly dashboard
@@ -1092,6 +1245,26 @@ async function storeAllComponentsData() {
 // Generate weekly dashboard data
 async function generateWeeklyDashboard() {
   try {
+    // Check if dashboard generation is already in progress
+    const status = await chrome.storage.local.get(['dashboardGenerationInProgress', 'lastDashboardGeneration']);
+    
+    if (status.dashboardGenerationInProgress) {
+      console.log('⚠️ Dashboard generation already in progress, skipping duplicate request');
+      return;
+    }
+    
+    // Check if dashboard was generated recently (within last 1 minute)
+    if (status.lastDashboardGeneration) {
+      const timeSinceLastGeneration = Date.now() - status.lastDashboardGeneration;
+      if (timeSinceLastGeneration < 60 * 1000) { // 1 minute
+        console.log(`⚠️ Dashboard was generated ${Math.round(timeSinceLastGeneration / 1000)}s ago, skipping duplicate`);
+        return;
+      }
+    }
+    
+    // Set flag to prevent concurrent generations
+    await chrome.storage.local.set({ dashboardGenerationInProgress: true });
+    
     console.log('Generating weekly dashboard...');
     
     // Get last 7 days of snapshots
@@ -1201,14 +1374,20 @@ async function generateWeeklyDashboard() {
       componentDetails: componentDetails
     };
     
-    // Store dashboard data
-    await chrome.storage.local.set({ weeklyDashboardData: dashboardData });
+    // Store dashboard data and clear the in-progress flag
+    await chrome.storage.local.set({
+      weeklyDashboardData: dashboardData,
+      lastDashboardGeneration: Date.now(),
+      dashboardGenerationInProgress: false
+    });
     console.log('Weekly dashboard data generated and stored');
     
     return dashboardData;
     
   } catch (error) {
     console.error('Error generating weekly dashboard:', error);
+    // Clear the in-progress flag on error
+    await chrome.storage.local.set({ dashboardGenerationInProgress: false });
     throw error;
   }
 }
@@ -1258,12 +1437,6 @@ async function sendWeeklyDashboardNotification() {
     message += `🔗 VIEW FULL DASHBOARD\n`;
     message += `Click the extension icon and select "View Weekly Dashboard"\n`;
     message += `Or copy and paste this URL in Chrome: ${dashboardUrl}\n\n`;
-    message += `The dashboard includes:\n`;
-    message += `✨ Interactive charts and graphs\n`;
-    message += `📊 Detailed analytics\n`;
-    message += `📈 Daily trend analysis\n`;
-    message += `📦 Component breakdown\n`;
-    message += `📉 Week-over-week comparison\n\n`;
     message += `Generated: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n`;
     message += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
     
@@ -1673,21 +1846,7 @@ async function setupSOETriageFetch() {
 // VPN DETECTION AND AUTO-LOGIN FUNCTIONALITY
 // ============================================
 
-// Set up VPN detection alarm
-async function setupVPNDetection() {
-  // Clear existing VPN check alarm
-  await chrome.alarms.clear('vpnCheck');
-  
-  // Create alarm to check VPN status every 30 seconds
-  chrome.alarms.create('vpnCheck', {
-    delayInMinutes: 0.5, // Start after 30 seconds
-    periodInMinutes: 0.5 // Check every 30 seconds
-  });
-  
-  console.log('VPN detection enabled - checking every 30 seconds');
-}
-
-// Check if VPN is connected by trying to reach IBM server
+// Check if VPN/network is accessible (called only when needed)
 async function checkVPNConnection() {
   try {
     const response = await fetch('https://libh-proxy1.fyre.ibm.com/buildBreakReport/', {
@@ -1696,54 +1855,11 @@ async function checkVPNConnection() {
       signal: AbortSignal.timeout(5000) // 5 second timeout
     });
     
-    // If we can reach the server, VPN is connected
+    // If we can reach the server, connection is good
     return response.status !== 0;
   } catch (error) {
-    // If fetch fails, VPN is likely not connected
-    return false;
-  }
-}
-
-// Handle VPN status change
-async function handleVPNStatusChange(isConnected) {
-  const config = await getConfig();
-  
-  // Store VPN status
-  await chrome.storage.local.set({ vpnConnected: isConnected });
-  
-  if (isConnected) {
-    console.log('✓ VPN Connected - Checking login status...');
-    
-    // Clear error notification history when VPN reconnects
-    // This allows a fresh error notification if the issue persists
-    await chrome.storage.local.remove(['lastErrorNotified', 'lastErrorMessage']);
-    console.log('🔄 Cleared error notification history - fresh notifications enabled');
-    
-    // Mark that we need to retry data collection
-    await chrome.storage.local.set({ needsDataRetry: true });
-    
-    // If auto-login is enabled, attempt to login
-    if (config.autoLogin && config.ibmUsername && config.ibmPassword) {
-      await attemptAutoLogin();
-    }
-  } else {
-    console.log('✗ VPN Disconnected');
-  }
-}
-
-// Check VPN status periodically
-async function checkVPNStatus() {
-  try {
-    const isConnected = await checkVPNConnection();
-    const storage = await chrome.storage.local.get(['vpnConnected']);
-    const wasConnected = storage.vpnConnected || false;
-    
-    // Only trigger if status changed
-    if (isConnected !== wasConnected) {
-      await handleVPNStatusChange(isConnected);
-    }
-  } catch (error) {
-    console.error('Error checking VPN status:', error);
+    // If fetch fails, VPN/network is not accessible
+    throw new Error('VPN or network connection not available');
   }
 }
 
@@ -1925,59 +2041,27 @@ async function handleW3IDAuthentication(tabId, username, password) {
             !tab.url.includes('login')) {
           
           if (!authAttempted) {
-            // Auto-logged in! Make an API call from tab context to establish session
+            // Auto-logged in! Close tab
             console.log('✓ Auto-logged in successfully (already authenticated in browser)');
-            console.log('   Making API call from tab context to establish session...');
+            console.log('   Session cookies are now available for next scheduled check');
             chrome.tabs.onUpdated.removeListener(listener);
-            
-            // Execute script in tab to make API call and establish session
-            try {
-              await chrome.scripting.executeScript({
-                target: { tabId: tabId },
-                func: () => {
-                  // Make API call from tab context to establish cookies
-                  fetch('https://libh-proxy1.fyre.ibm.com/buildBreakReport/rest2/defects/buildbreak/fas?fas=Messaging', {
-                    credentials: 'include',
-                    headers: { 'Accept': 'application/json' }
-                  }).then(() => {
-                    console.log('✓ Session established from tab context');
-                  }).catch(err => {
-                    console.log('⚠️ Error establishing session:', err);
-                  });
-                }
-              });
-              
-              console.log('   Waiting 3 seconds for session to fully establish...');
-              setTimeout(async () => {
-                chrome.tabs.remove(tabId);
-                // Clear login in progress flag
-                await chrome.storage.local.remove(['loginInProgress']);
-                // Retry defect check after session is established
-                setTimeout(() => {
-                  console.log('🔄 Retrying defect check after session established...');
-                  checkDefects();
-                }, 2000);
-              }, 3000);
-            } catch (error) {
-              console.error('Error establishing session:', error);
+            setTimeout(async () => {
               chrome.tabs.remove(tabId);
+              // Clear login in progress flag only
               await chrome.storage.local.remove(['loginInProgress']);
-            }
+              console.log('✓ Login complete - cookies ready for next check');
+            }, 2000);
             resolve();
           } else {
             // Logged in after manual authentication
             console.log('✓ Successfully logged in to IBM system after manual authentication!');
-            console.log('   Waiting 5 seconds for session cookies to propagate...');
+            console.log('   Session cookies are now available for next scheduled check');
             chrome.tabs.onUpdated.removeListener(listener);
             setTimeout(async () => {
               chrome.tabs.remove(tabId);
-              // Clear login in progress flag
+              // Clear login in progress flag only
               await chrome.storage.local.remove(['loginInProgress']);
-              // Retry defect check after successful login with longer delay
-              setTimeout(() => {
-                console.log('🔄 Retrying defect check after successful login...');
-                checkDefects();
-              }, 3000); // Increased to 3 seconds
+              console.log('✓ Login complete - cookies ready for next check');
             }, 2000);
             resolve();
           }
@@ -2138,30 +2222,37 @@ function fillW3IDCredentials(username, password) {
   }
 }
 
-// Update alarm handler to include VPN check and SOE Triage fetch
+// Alarm handler
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'dailyDefectCheck') {
-    console.log('Daily defect check triggered');
-    await checkDefects();
-    // Also collect data for all components (for component explorer)
-    await storeAllComponentsData();
-  } else if (alarm.name === 'keepSessionAlive') {
-    console.log('Session keepalive triggered');
-    await keepSessionAlive();
-  } else if (alarm.name === 'autoRetryCheck') {
-    await checkForAutoRetry();
-  } else if (alarm.name === 'weeklyDashboard') {
-    console.log('Weekly dashboard triggered');
-    await sendWeeklyDashboardNotification();
-  } else if (alarm.name === 'vpnCheck') {
-    await checkVPNStatus();
-  } else if (alarm.name === 'soeTriageFetch') {
-    console.log('SOE Triage fetch triggered');
-    try {
-      await fetchSOETriageDefects();
-    } catch (error) {
-      console.error('Failed to fetch SOE Triage defects:', error);
+    // Check if today is weekend
+    const today = new Date().getDay();
+    if (today === 0 || today === 6) {
+      console.log('⏭️ Skipping weekend - no check today');
+      return;
     }
+    
+    console.log('📅 Daily defect check triggered');
+    try {
+      // Collect all data (includes monitored components notification, SOE Triage, and all 51 components)
+      // Flow: 1) Check monitored components + send notification, 2) Fetch SOE Triage, 3) Collect all 51 components
+      await collectAllData();
+      
+      console.log('✅ Daily check complete - data collected and notifications sent');
+    } catch (error) {
+      console.error('Daily check failed:', error);
+      await handleConnectionError(error);
+    }
+  } else if (alarm.name === 'weeklyDashboard') {
+    console.log('📊 Weekly dashboard triggered');
+    try {
+      await sendWeeklyDashboardNotification();
+    } catch (error) {
+      console.error('Weekly dashboard failed:', error);
+    }
+  } else if (alarm.name === 'connectionRetry') {
+    console.log('🔄 Connection retry triggered');
+    await retryConnection();
   }
 });
 

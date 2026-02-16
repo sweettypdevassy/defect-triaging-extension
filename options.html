@@ -172,19 +172,7 @@
     <h1>⚙️ Settings</h1>
     <p class="subtitle">Configure your defect triaging automation</p>
     
-    <div class="info-box">
-      <h3>📋 Setup Instructions</h3>
-      <p>1. Get your Slack webhook URL from your workspace</p>
-      <p>2. Make sure you're logged in to <a href="https://libh-proxy1.fyre.ibm.com/buildBreakReport/" target="_blank">IBM Build Break Report</a></p>
-      <p>3. Configure your component and check time below</p>
-    </div>
-    
     <form id="settingsForm">
-      <div class="info-box" style="background-color: #fff3cd; border-color: #ffc107;">
-        <h3>🔐 IBM Authentication</h3>
-        <p>Enter your IBM w3id credentials for automatic login when VPN is connected</p>
-      </div>
-      
       <div class="form-group">
         <label for="ibmUsername">IBM w3id Username *</label>
         <input type="text" id="ibmUsername" placeholder="your.email@ibm.com" required>
@@ -223,6 +211,12 @@
       </div>
       
       <div class="form-group">
+        <label for="weeklyDashboardTime">Weekly Dashboard Time (IST) *</label>
+        <input type="time" id="weeklyDashboardTime" required>
+        <div class="help-text">Time to send weekly dashboard notification every Monday (in IST timezone)</div>
+      </div>
+      
+      <div class="form-group">
         <div class="checkbox-group">
           <input type="checkbox" id="enabled" checked>
           <label for="enabled">Enable automatic daily checks</label>
@@ -240,12 +234,6 @@
         <button type="button" id="clearDashboardBtn" class="secondary" style="margin-top: 10px; width: 100%;">Clear & Regenerate Dashboard</button>
       </div>
       
-      <div class="info-box" style="background-color: #e7f3ff; border-color: #b3d9ff; margin-top: 20px;">
-        <h3>🔍 Test Jazz/RTC Integration</h3>
-        <p>Manually fetch SOE Triage overdue defects from Jazz/RTC system</p>
-        <button type="button" id="testJazzBtn" class="secondary" style="margin-top: 10px; width: 100%;">Fetch SOE Triage Defects Now</button>
-        <div id="jazzTestResult" style="margin-top: 10px; font-size: 12px; display: none;"></div>
-      </div>
     </form>
     
     <div id="message" class="message"></div>
