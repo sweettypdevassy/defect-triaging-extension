@@ -242,10 +242,28 @@ async function sendSlackNotificationGrouped(webhookUrl, componentDefectsMap, tot
   const timestamp = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
   
   // Check for duplicate notification suppression (within 2 minutes)
-  const storage = await chrome.storage.local.get(['lastNotificationSent', 'lastNotificationCount']);
+  const storage = await chrome.storage.local.get(['lastNotificationSent', 'lastNotificationCount', 'soeTriageDefects']);
   const lastNotificationTime = storage.lastNotificationSent ? new Date(storage.lastNotificationSent) : null;
   const lastNotificationCount = storage.lastNotificationCount || 0;
   const now = new Date();
+  
+  // Get SOE Triage overdue defects and filter by monitored components
+  const allSoeDefects = storage.soeTriageDefects || [];
+  
+  // Get monitored component names from componentDefectsMap
+  const monitoredComponents = componentDefectsMap.map(c => c.componentName);
+  
+  // Filter SOE defects to only include monitored components
+  // Match by functionalArea field (case-insensitive)
+  const soeDefects = allSoeDefects.filter(defect => {
+    const defectFunctionalArea = defect.functionalArea || '';
+    return monitoredComponents.some(monitored =>
+      defectFunctionalArea.toLowerCase().includes(monitored.toLowerCase()) ||
+      monitored.toLowerCase().includes(defectFunctionalArea.toLowerCase())
+    );
+  });
+  
+  console.log(`Filtered SOE defects: ${soeDefects.length} out of ${allSoeDefects.length} match monitored components (${monitoredComponents.join(', ')})`);
   
   // If same defect count was sent within last 2 minutes, skip
   if (lastNotificationTime &&
@@ -299,6 +317,35 @@ async function sendSlackNotificationGrouped(webhookUrl, componentDefectsMap, tot
         message += `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
       }
     });
+    
+    // Add SOE Triage overdue defects section if available
+    if (soeDefects && soeDefects.length > 0) {
+      message += `\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+      message += `📋 SOE Triage Overdue Defects (${soeDefects.length})\n\n`;
+      
+      // Show up to 5 SOE defects
+      const soeDefectsToShow = soeDefects.slice(0, 5);
+      
+      soeDefectsToShow.forEach((defect, index) => {
+        const defectLink = `https://wasrtc.hursley.ibm.com:9443/jazz/web/projects/WS-CD#action=com.ibm.team.workitem.viewWorkItem&id=${defect.id}`;
+        
+        message += `${index + 1}. Defect ID: ${defect.id}\n`;
+        message += `   Link: ${defectLink}\n`;
+        message += `   Summary: ${defect.summary}\n`;
+        message += `   Functional Area: ${defect.functionalArea}\n`;
+        message += `   Filed Against: ${defect.filedAgainst}\n`;
+        message += `   Owner: ${defect.ownedBy}\n`;
+        message += `   Created: ${defect.creationDate}\n`;
+        
+        if (index < soeDefectsToShow.length - 1) {
+          message += `\n`;
+        }
+      });
+      
+      if (soeDefects.length > 5) {
+        message += `\n... and ${soeDefects.length - 5} more SOE overdue defect(s)\n`;
+      }
+    }
     
     message += `\n\nLast checked: ${timestamp}`;
   }
@@ -429,12 +476,8 @@ async function collectAllData(force = false, silent = false) {
       }
     }
     
-    // 2. Fetch Jazz/RTC SOE Triage defects (slower)
-    console.log('📋 Fetching SOE Triage defects from Jazz/RTC...');
-    const soeDefects = await fetchSOETriageDefects();
-    console.log(`✓ Fetched ${soeDefects ? soeDefects.length : 0} SOE Triage defects`);
-    
-    // 3. Collect data for all components (slowest - for component explorer)
+    // 2. Collect data for all components (for component explorer)
+    // Note: SOE Triage defects are already fetched in checkDefects() before sending notification
     console.log('📋 Collecting all components data...');
     await storeAllComponentsData();
     
@@ -550,6 +593,18 @@ async function checkDefects(silent = false) {
     
     // Store daily snapshot for weekly dashboard
     await storeDailySnapshot(componentDefectsMap, totalDefects);
+    
+    // Fetch SOE Triage defects BEFORE sending notification (so we have fresh data)
+    if (!silent) {
+      console.log('📋 Fetching SOE Triage defects before sending notification...');
+      try {
+        await fetchSOETriageDefects();
+        console.log('✓ SOE Triage defects fetched successfully');
+      } catch (error) {
+        console.error('⚠️ Failed to fetch SOE Triage defects:', error.message);
+        // Continue anyway - notification will use old SOE data if available
+      }
+    }
     
     // Send Slack notification grouped by component (unless silent mode)
     if (!silent) {
@@ -1635,16 +1690,11 @@ async function openJazzRTCLoginPage() {
         type: 'basic',
         iconUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
         title: '✅ Jazz/RTC Login Successful',
-        message: 'You are now logged in to Jazz/RTC. Fetching SOE Triage defects...',
+        message: 'You are now logged in to Jazz/RTC.',
         priority: 1
       });
       
-      // Trigger SOE Triage fetch after successful login
-      setTimeout(() => {
-        fetchSOETriageDefects().catch(error => {
-          console.error('Error fetching SOE Triage defects after login:', error);
-        });
-      }, 1000);
+      // Note: SOE Triage defects will be fetched automatically during next data collection
       
     } catch (scriptError) {
       console.error('Error injecting login script:', scriptError);
