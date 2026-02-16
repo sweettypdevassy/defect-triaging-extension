@@ -826,8 +826,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   
   if (request.action === 'pauseExtension') {
     chrome.alarms.clearAll().then(async () => {
-      await chrome.storage.sync.set({ paused: true });
-      console.log('⏸️ Extension paused - all alarms cleared');
+      // Update lastCheck to now so we don't run missed checks when resumed
+      await chrome.storage.sync.set({
+        paused: true,
+        lastCheck: new Date().toISOString()
+      });
+      console.log('⏸️ Extension paused - all alarms cleared, lastCheck updated');
       sendResponse({ success: true });
     }).catch(error => {
       sendResponse({ success: false, error: error.message });
@@ -836,10 +840,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
   
   if (request.action === 'resumeExtension') {
-    chrome.storage.sync.set({ paused: false }).then(async () => {
+    chrome.storage.sync.set({
+      paused: false,
+      lastCheck: new Date().toISOString() // Update lastCheck to now when resuming
+    }).then(async () => {
       await setupDailyAlarm();
       await setupWeeklyDashboardAlarm();
-      console.log('▶️ Extension resumed - alarms restarted');
+      console.log('▶️ Extension resumed - alarms restarted, lastCheck updated');
       sendResponse({ success: true });
     }).catch(error => {
       sendResponse({ success: false, error: error.message });
