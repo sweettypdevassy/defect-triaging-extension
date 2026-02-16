@@ -121,25 +121,19 @@ async function clearAndRegenerateDashboard() {
   button.textContent = 'Clearing...';
   
   try {
-    // Clear old dashboard data
+    // Clear ONLY monitored components dashboard data (keep 51 components data)
     await chrome.storage.local.remove(['dailySnapshots', 'weeklyDashboardData']);
-    showMessage('✓ Old data cleared. Regenerating with current defect counts...', 'success');
+    showMessage('✓ Old dashboard data cleared. Regenerating...', 'success');
     
     // Wait a moment
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise(resolve => setTimeout(resolve, 500));
     
-    // Trigger a check to create new snapshot
+    // Regenerate dashboard for monitored components and send to Slack
     button.textContent = 'Generating...';
-    const response = await chrome.runtime.sendMessage({ action: 'checkNow' });
+    const response = await chrome.runtime.sendMessage({ action: 'regenerateDashboardData' });
     
     if (response.success) {
-      // Wait for snapshot to be stored
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      // Generate dashboard
-      await chrome.runtime.sendMessage({ action: 'generateDashboard' });
-      
-      showMessage('✓ Dashboard data regenerated successfully! Refresh the dashboard page to see updated values.', 'success');
+      showMessage('✓ Dashboard regenerated and sent to Slack! Refresh dashboard page to see updates.', 'success');
     } else {
       showMessage('✗ Error regenerating data: ' + response.error, 'error');
     }

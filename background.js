@@ -382,10 +382,10 @@ async function collectAllData(force = false, silent = false) {
     await checkVPNConnection();
     
     // 1. Fetch Build Break Report defects FIRST (fast - sends notification quickly)
-    console.log('📋 Fetching Build Break Report defects...');
+    console.log(silent ? '📋 Fetching Build Break Report defects (silent mode)...' : '📋 Fetching Build Break Report defects...');
     try {
       await checkDefects(silent);
-      console.log('✅ Monitored components notification sent');
+      console.log(silent ? '✅ Monitored components data collected (no notification)' : '✅ Monitored components notification sent');
     } catch (error) {
       // Check if this is a login error
       const isLoginError = error.message && error.message.includes('Not logged in');
@@ -419,7 +419,7 @@ async function collectAllData(force = false, silent = false) {
           
           await checkDefects(silent);
           await chrome.storage.local.remove(['needsMonitoredComponentsRetry']);
-          console.log('✅ Monitored components notification sent after login');
+          console.log(silent ? '✅ Monitored components data collected after login (no notification)' : '✅ Monitored components notification sent after login');
         } else {
           console.log('⏭️ Login timeout - will retry on next scheduled check');
           throw error; // Stop here, don't proceed to SOE/51 components
@@ -765,7 +765,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       .then(() => {
         sendResponse({ success: true });
       })
-      .catch(error => {
+      .catch(async (error) => {
+        // Handle connection errors with retry logic
+        await handleConnectionError(error);
         sendResponse({ success: false, error: error.message });
       });
     return true; // Keep channel open for async response
@@ -811,6 +813,33 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }).catch(error => {
       sendResponse({ success: false, error: error.message });
     });
+    return true;
+  }
+  
+  if (request.action === 'regenerateDashboardData') {
+    console.log('📊 Regenerating dashboard: collecting all data and sending monitored components dashboard to Slack');
+    (async () => {
+      try {
+        // Collect ALL data silently (monitored components + SOE + 51 components)
+        // First param: force = false (not forcing), Second param: silent = true (no notifications)
+        console.log('Collecting all components data silently...');
+        await collectAllData(false, true);
+        
+        // Wait for data to be fully stored
+        console.log('Waiting for data to be stored...');
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        
+        // Send weekly dashboard notification to Slack (only for monitored components)
+        console.log('Generating and sending monitored components dashboard to Slack...');
+        await sendWeeklyDashboardNotification();
+        
+        console.log('✅ All data collected and monitored components dashboard sent to Slack');
+        sendResponse({ success: true });
+      } catch (error) {
+        console.error('❌ Error regenerating dashboard:', error);
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
     return true;
   }
   
