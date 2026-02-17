@@ -284,15 +284,6 @@ For issues or questions:
 4. Verify IBM session is active
 5. Test with "Check Now" button
 
-## 🚀 Future Enhancements
-
-Potential features for future versions:
-- Custom notification templates
-- Email notifications
-- Multiple Slack channels
-- Defect filtering rules
-- Historical data export
-- Mobile app integration
 
 ## 📄 License
 
