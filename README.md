@@ -1,29 +1,16 @@
 # Defect Triaging Chrome Extension
 
-A Chrome extension that automatically monitors IBM Liberty Build Break Report for untriaged defects and sends daily Slack notifications.
-
-## 🆕 New in v2.1.0: Automatic VPN Login
-
-The extension now automatically detects when you connect to IBM VPN and logs you into the Build Break Report system using your w3id credentials!
-
-**Key Features:**
-- 🔐 **Auto-Login**: Automatically authenticates when VPN is connected
-- 🔍 **VPN Detection**: Checks VPN status every 30 seconds
-- 🔒 **Secure Storage**: Credentials stored securely in Chrome
-- 🔄 **Session Management**: Maintains login throughout the day
-
-**[📖 Read the Complete Auto-Login Guide](AUTO_LOGIN_GUIDE.md)** for detailed setup and usage instructions.
-
----
+A Chrome extension that automatically monitors IBM Liberty Build Break Report for untriaged defects and sends daily Slack notifications with weekly analytics dashboard.
 
 ## 🎯 Features
 
-- ✅ **Automatic VPN Login**: Auto-detects VPN and logs you in (NEW!)
+- ✅ **Automatic Login**: Auto-detects VPN and logs you in with w3id credentials
 - ✅ **Daily Automated Checks**: Runs at 10:00 AM IST (configurable)
 - ✅ **Slack Notifications**: Sends grouped notifications by component
 - ✅ **Multi-Component Support**: Monitor multiple components simultaneously
+- ✅ **SOE Triage Integration**: Includes overdue SOE defects in notifications
 - ✅ **Weekly Dashboard**: Analytics dashboard with charts and trends (Monday 11 AM)
-- ✅ **Session Keepalive**: Maintains IBM session to reduce login frequency
+- ✅ **Session Management**: Maintains IBM session automatically
 - ✅ **Auto-Retry**: Automatically retries when you login after session expires
 - ✅ **Manual Triggers**: "Check Now" and "Test Now" buttons for immediate checks
 
@@ -32,15 +19,11 @@ The extension now automatically detects when you connect to IBM VPN and logs you
 - Google Chrome browser
 - IBM W3 ID account with access to Build Break Report
 - Slack workspace with webhook URL
-- Active IBM session (login required)
+- IBM VPN connection
 
-## 🚀 Installation
+## 🚀 Quick Start
 
-### Step 1: Download Extension
-
-Clone or download this repository to your local machine.
-
-### Step 2: Install in Chrome
+### 1. Install Extension
 
 1. Open Chrome and navigate to `chrome://extensions/`
 2. Enable "Developer mode" (toggle in top right)
@@ -48,131 +31,172 @@ Clone or download this repository to your local machine.
 4. Select the `defect-triaging-extension` folder
 5. Extension icon will appear in Chrome toolbar
 
-### Step 3: Configure Extension
+### 2. Configure Settings
 
 1. Click the extension icon in Chrome toolbar
 2. Click "Settings" button
 3. Enter configuration:
-   - **IBM w3id Username**: Your IBM email address (for auto-login)
+   - **IBM w3id Username**: Your IBM email address
    - **IBM w3id Password**: Your w3id password (stored securely)
-   - **Enable automatic login**: Keep checked for auto-login feature
+   - **Enable automatic login**: Keep checked for auto-login
    - **Slack Webhook URL**: Your Slack incoming webhook URL
-   - **Component Names**: Comma-separated list (e.g., `Messaging, Database, Security`)
-   - **Check Time**: Time for daily checks (default: 10:00 AM)
+   - **Component Names**: Comma-separated list (e.g., `JCA, JPA, Spring Boot`)
+   - **Check Time**: Time for daily checks (default: 10:00 AM IST)
+   - **Weekly Dashboard Time**: Time for weekly dashboard (default: 11:00 AM Tuesday)
 4. Click "Save Settings"
 
-### Step 4: Connect to VPN
+### 3. Connect to VPN & Test
 
-1. Connect to IBM VPN using your VPN client
-2. Extension will automatically detect VPN connection (within 30 seconds)
-3. Extension will automatically login to IBM Build Break Report
-4. Check browser console for confirmation: "✓ Successfully logged in to IBM system!"
-
-**Note**: If you prefer manual login, uncheck "Enable automatic login" in settings and follow the manual login process below.
-
-### Manual Login (Optional)
-
-If auto-login is disabled or you prefer manual login:
-
-1. Open https://libh-proxy1.fyre.ibm.com/buildBreakReport/
-2. Login with your IBM W3 ID credentials
-3. Complete MFA (IBM Verify, SMS, or passkey)
-4. Keep this tab open or Chrome running
-
-### Step 5: Test
-
-1. Click extension icon
-2. Click "Check Now" button
-3. Verify Slack notification received
-4. Check console logs for any errors
+1. Connect to IBM VPN
+2. Extension will automatically login (within 30 seconds)
+3. Click extension icon → "Check Now" to test
+4. Verify Slack notification received
 
 ## 📱 Usage
 
 ### Daily Automatic Checks
-
 - Extension runs automatically at configured time (default 10:00 AM IST)
 - Checks all configured components
+- Fetches SOE Triage overdue defects
 - Sends Slack notification with untriaged defects
 - Stores daily snapshot for weekly dashboard
 
 ### Manual Checks
-
 - Click extension icon → "Check Now" for immediate check
 - Go to Settings → "Test Now" to test configuration
 
 ### Weekly Dashboard
-
 - Automatically generated every Monday at 11:00 AM IST
 - Shows 7-day trends, charts, and analytics
 - Click "📊 View Weekly Dashboard" button to open anytime
 - Sent to Slack with summary
 
-## 🔧 Configuration Options
+### Popup Status Indicators
+- 🔐 **Login in Progress**: Authentication happening
+- ⚠️ **Not Logged In**: Need to login
+- ✅ **Active & Logged In**: Everything working
+- Shows last successful login timestamp
 
-### Slack Webhook URL
+## 🔐 Automatic Login
 
-Get your webhook URL from Slack:
-1. Go to https://api.slack.com/apps
-2. Create new app or select existing
-3. Enable "Incoming Webhooks"
-4. Create webhook for your channel
-5. Copy webhook URL
+### How It Works
+1. Extension detects VPN connection every 30 seconds
+2. Checks if already logged in to IBM system
+3. If not logged in, opens login page in background
+4. Automatically fills w3id credentials
+5. Waits for authentication to complete
+6. Verifies login success by testing API
+7. Closes login tab automatically
+
+### Manual Login (If Needed)
+If auto-login fails or you prefer manual login:
+1. Open https://libh-proxy1.fyre.ibm.com/buildBreakReport/
+2. Login with your IBM W3 ID credentials
+3. Complete MFA (IBM Verify, SMS, or passkey)
+4. Extension will detect successful login
+
+### Login Verification
+The extension now properly verifies login by:
+- Testing API with actual data validation
+- Checking response contains real defect data (not error/redirect)
+- Periodic checking (every 3 seconds) when manual login needed
+- Storing verified login state with timestamp
+
+## 📊 Weekly Dashboard Features
+
+### Summary Cards
+- Total defects this week
+- Untriaged defect count
+- Test bugs, product bugs, infrastructure bugs
+- Week-over-week trend
+
+### Interactive Charts
+- **Daily Trend**: Line chart showing defect trends over 7 days
+- **Triage Status**: Pie chart showing distribution
+- **Component Comparison**: Bar chart comparing components
+- **Week-over-Week**: Comparison with previous week
+
+### Priority Items
+- Automatically highlights high untriaged counts
+- Shows increasing trends
+- Identifies components needing attention
+
+## 🔧 Configuration
+
 
 ### Component Names
-
 Enter comma-separated component names:
 ```
-Messaging, Database, Security, Batch
+JCA, JPA, Spring Boot, Messaging, Database
 ```
 
 ### Check Time
-
 24-hour format (HH:MM):
 ```
 10:00  → 10:00 AM
 14:30  → 2:30 PM
 ```
 
-## 📊 Dashboard Features
+## 🆘 Troubleshooting
 
-### Summary Cards
-- Total defects this week
-- Average daily defects
-- Current untriaged count
-- Week-over-week change
+### Login Issues
 
-### Charts
-- Daily defect trend (line chart)
-- Triage status breakdown (pie chart)
-- Component breakdown (bar chart)
-- Week-over-week comparison (grouped bar chart)
+**Problem**: Extension shows "Not Logged In" status
 
-### Priority Items
-- Top 5 components by defect count
-- Status and trend indicators
+**Solution**:
+1. Check credentials in Settings are correct
+2. Ensure VPN is connected
+3. Try manual login once
+4. Check browser console for error messages
+5. Extension will auto-detect when you complete login
 
-## 🔐 Session Management
+**Problem**: "Login in Progress" stuck
 
-### Session Keepalive
+**Solution**:
+1. Wait 60 seconds for timeout
+2. Refresh the page if needed
+3. Complete manual login with username, password, and passkey
+4. Extension will detect successful login automatically
 
-Extension automatically:
-- Sends request to IBM every 2 hours
-- Refreshes session cookies
-- Reduces login frequency
+### No Slack Notifications
 
-### Auto-Retry
+**Problem**: Not receiving notifications
 
-If session expires:
-- Extension detects "Not logged in" error
-- Sends Slack notification
-- Automatically retries when you login again
-- No manual intervention needed
+**Solution**:
+1. Check Slack webhook URL is correct
+2. Test with "Test Now" button
+3. Check console logs for errors
+4. Verify Slack webhook is active
+5. Ensure Chrome is running at scheduled time
 
-### Login Requirements
+### SOE Defects Not Fresh
 
-- **Initial**: Login once when you start using extension
-- **Ongoing**: Login when session expires (typically daily if laptop shuts down)
-- **Best Practice**: Keep Chrome running to maintain session
+**Problem**: SOE Triage defects showing old data
+
+**Solution**:
+- This is now fixed! Extension always fetches fresh data
+- Added `cache: 'no-cache'` to prevent browser caching
+- Waits for Jazz/RTC login to complete before fetching
+- Logs show "✅ Jazz/RTC FRESH data received"
+
+### Dashboard Not Loading
+
+**Problem**: Dashboard shows no data
+
+**Solution**:
+1. Wait for daily checks to collect data (need 1-7 days)
+2. Click "Check Now" to create first snapshot
+3. Check console logs for errors
+4. Verify extension is running daily checks
+
+### Dashboard Regeneration Missing SOE Data
+
+**Problem**: "Clear and regenerate" doesn't include SOE defects
+
+**Solution**:
+- This is now fixed! SOE data is always fetched
+- Works in both normal and silent modes
+- Includes SOE defects in dashboard regeneration
 
 ## 📁 Project Structure
 
@@ -186,143 +210,79 @@ defect-triaging-extension/
 ├── options.js            # Settings functionality
 ├── dashboard.html        # Weekly dashboard template
 ├── dashboard.js          # Dashboard rendering logic
-├── chart.min.js          # Chart.js library (local)
-├── icon16.png           # Extension icon (16x16)
-├── icon48.png           # Extension icon (48x48)
-├── icon128.png          # Extension icon (128x128)
+├── chart.min.js          # Chart.js library
 └── README.md            # This file
 ```
-
-## 📚 Documentation
-
-- **INSTALLATION.md**: Detailed installation guide
-- **TESTING_GUIDE.md**: Testing and troubleshooting
-- **WEEKLY_DASHBOARD_GUIDE.md**: Dashboard features and usage
-- **DASHBOARD_DATA_GUIDE.md**: Understanding dashboard metrics
-- **DATA_COLLECTION_TIMING.md**: When and how data is collected
-- **DUPLICATE_FIX.md**: Fixing duplicate notification issues
-- **CHANGELOG.md**: Version history and updates
-
-## 🆘 Troubleshooting
-
-### "Not logged in" Error
-
-**Problem**: Extension can't access IBM system
-
-**Solution**:
-1. Open https://libh-proxy1.fyre.ibm.com/buildBreakReport/
-2. Login with IBM W3 ID
-3. Complete MFA
-4. Extension will auto-retry
-
-### No Slack Notifications
-
-**Problem**: Not receiving notifications
-
-**Solution**:
-1. Check Slack webhook URL is correct
-2. Test with "Test Now" button
-3. Check console logs for errors
-4. Verify Slack webhook is active
-
-### Duplicate Notifications
-
-**Problem**: Receiving multiple notifications
-
-**Solution**:
-1. Check only one instance of extension is installed
-2. Reload extension: chrome://extensions/ → reload icon
-3. See DUPLICATE_FIX.md for details
-
-### Dashboard Not Loading
-
-**Problem**: Dashboard shows no data
-
-**Solution**:
-1. Wait for daily checks to collect data (need 1-7 days)
-2. Check console logs for errors
-3. Verify extension is running daily checks
-4. See TESTING_GUIDE.md for debugging
-
-## 🔄 Updates
-
-### Updating Extension
-
-1. Download latest version
-2. Go to chrome://extensions/
-3. Click reload icon on extension
-4. Settings are preserved
-
-### Version History
-
-See CHANGELOG.md for detailed version history.
-
-## ⚙️ Advanced Configuration
-
-### Custom Check Schedule
-
-Edit check time in settings to run at different times:
-- Morning: 09:00
-- Afternoon: 14:00
-- Evening: 18:00
-
-### Multiple Components
-
-Monitor multiple components by separating with commas:
-```
-Messaging, Database, Security, Batch, CDI, MCP
-```
-
-### Dashboard Schedule
-
-Weekly dashboard runs every Monday at 11:00 AM IST (not configurable).
 
 ## 🔒 Security & Privacy
 
 - Extension uses browser's existing IBM session
-- No credentials stored
+- Credentials stored securely in Chrome's encrypted storage
+- Only accessible by the extension
 - Slack webhook URL stored locally in Chrome
 - All data stored locally in Chrome storage
 - No external servers (except IBM and Slack)
+- No tracking or analytics
 
-## 📝 Notes
+## 📝 Important Notes
 
-### Session Expiration
-
-- IBM sessions typically expire after 8-24 hours of inactivity
+### Session Management
+- IBM sessions typically expire after 8-24 hours
+- Extension automatically refreshes session every 2 hours
 - If laptop shuts down, session will expire
-- Need to login again next morning
-- Session keepalive helps but doesn't prevent all expirations
+- Extension auto-detects and re-authenticates when VPN reconnects
 
 ### Best Practices
-
 1. **Keep Chrome Running**: Helps maintain session
-2. **Login Before 10 AM**: Ensures daily check works
+2. **Stay Connected to VPN**: Required for IBM access
 3. **Check Slack Daily**: Monitor for login errors
 4. **Update Regularly**: Get latest fixes and features
+5. **Review Dashboard Weekly**: Track team progress
 
 ### Limitations
-
-- Requires active IBM session (cannot automate login/MFA)
+- Requires IBM VPN connection
+- Chrome must be running for scheduled checks
 - Session expires when laptop shuts down
-- Need to be logged in for checks to work
 - Cannot run when Chrome is closed
 
 ## 🎓 Tips
 
-1. **Bookmark IBM URL**: Quick access for login
+1. **Bookmark IBM URL**: Quick access for manual login if needed
 2. **Enable Slack Notifications**: Don't miss defect alerts
 3. **Review Dashboard Weekly**: Track team progress
 4. **Use "Check Now"**: Test after configuration changes
-5. **Check Console Logs**: Helpful for debugging
+5. **Check Console Logs**: Helpful for debugging (F12 → Console)
+6. **Pin Extension**: Click puzzle icon → pin to toolbar
+
+## 🔄 Recent Fixes (v2.2.0)
+
+### Login Authentication
+- ✅ Enhanced authentication verification with actual API data validation
+- ✅ Automatic detection of manual login completion (checks every 3 seconds)
+- ✅ Persistent login state tracking with timestamps
+- ✅ Clear visual feedback in popup showing login status
+- ✅ Proper handling of passkey authentication flow
+
+### SOE Triage Defects
+- ✅ Fixed caching issue - now always fetches fresh data
+- ✅ Added `cache: 'no-cache'` to prevent browser caching
+- ✅ Waits for Jazz/RTC login to complete before fetching
+- ✅ Always fetches SOE data (even in silent/dashboard regeneration mode)
+- ✅ Enhanced logging to show fresh data being fetched
+
+### Weekly Dashboard
+- ✅ Changed schedule from Monday to Tuesday (for demo purposes)
+- ✅ Dashboard regeneration now includes SOE Triage defects
+- ✅ Fixed silent mode skipping SOE fetch
 
 ## 📞 Support
 
 For issues or questions:
-1. Check TESTING_GUIDE.md for troubleshooting
-2. Review console logs (chrome://extensions/ → service worker)
-3. Verify IBM session is active
-4. Test with "Check Now" button
+1. Check this README for troubleshooting
+2. Review console logs (F12 → Console)
+3. Check extension background logs (chrome://extensions/ → service worker)
+4. Verify IBM session is active
+5. Test with "Check Now" button
 
 ## 🚀 Future Enhancements
 
@@ -344,6 +304,6 @@ Built for IBM Liberty team to streamline defect triaging workflow.
 
 ---
 
-**Version**: 2.0.0  
+**Version**: 2.2.0  
 **Last Updated**: February 2026  
 **Maintained By**: Development Team
