@@ -1735,8 +1735,20 @@ async function fetchSOETriageDefects() {
     if (!isAuthenticated) {
       console.log('🔑 Jazz/RTC authentication required - opening login page...');
       await openJazzRTCLoginPage();
-      // Don't throw error - auto-login will trigger fetch automatically
-      return [];
+      
+      // Wait for login to complete before continuing
+      console.log('⏳ Waiting 5 seconds for Jazz/RTC login to complete...');
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      
+      // Check again if authenticated after login
+      const isAuthenticatedNow = await isAuthenticatedWithJazzRTC();
+      if (!isAuthenticatedNow) {
+        console.log('⚠️ Jazz/RTC login did not complete - will use cached data if available');
+        // Return cached data if available
+        const storage = await chrome.storage.local.get(['soeTriageDefects']);
+        return storage.soeTriageDefects || [];
+      }
+      console.log('✅ Jazz/RTC login completed successfully, proceeding with fresh fetch...');
     }
     
     const config = await getConfig();
@@ -1776,7 +1788,7 @@ async function fetchSOETriageDefects() {
     }
     
     const data = await response.json();
-    console.log('Jazz/RTC response received:', data);
+    console.log('✅ Jazz/RTC FRESH data received (cache: no-cache)');
     console.log('Jazz/RTC response keys:', Object.keys(data));
     console.log('Jazz/RTC response type:', typeof data);
     
@@ -1784,7 +1796,7 @@ async function fetchSOETriageDefects() {
     const workItems = await parseJazzWorkItems(data, componentNames);
     console.log('Parsed work items:', workItems);
     
-    console.log(`Found ${workItems.length} SOE Triage overdue defects`);
+    console.log(`✅ Found ${workItems.length} SOE Triage overdue defects (FRESH from API)`);
     
     // Store in chrome.storage for dashboard
     await chrome.storage.local.set({ 
