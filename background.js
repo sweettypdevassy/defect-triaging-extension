@@ -602,16 +602,14 @@ async function checkDefects(silent = false) {
     // Store daily snapshot for weekly dashboard
     await storeDailySnapshot(componentDefectsMap, totalDefects);
     
-    // Fetch SOE Triage defects BEFORE sending notification (so we have fresh data)
-    if (!silent) {
-      console.log('📋 Fetching SOE Triage defects before sending notification...');
-      try {
-        await fetchSOETriageDefects();
-        console.log('✓ SOE Triage defects fetched successfully');
-      } catch (error) {
-        console.error('⚠️ Failed to fetch SOE Triage defects:', error.message);
-        // Continue anyway - notification will use old SOE data if available
-      }
+    // Fetch SOE Triage defects ALWAYS (needed for both notifications and dashboard)
+    console.log('📋 Fetching SOE Triage defects...');
+    try {
+      await fetchSOETriageDefects();
+      console.log('✓ SOE Triage defects fetched successfully');
+    } catch (error) {
+      console.error('⚠️ Failed to fetch SOE Triage defects:', error.message);
+      // Continue anyway - notification will use old SOE data if available
     }
     
     // Send Slack notification grouped by component (unless silent mode)
