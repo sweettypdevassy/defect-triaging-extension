@@ -120,14 +120,21 @@ async function setupDailyAlarm() {
 async function handleConnectionError(error) {
   const storage = await chrome.storage.local.get(['retryingConnection', 'retryAttempts', 'retryStartTime']);
   
+  // Check if this is a login error (handled automatically by opening login window)
+  const isLoginError = error.message && error.message.includes('Not logged in');
+  
   if (!storage.retryingConnection) {
-    // First error - notify Slack
+    // First error - notify Slack only for non-login errors
     console.error('❌ Connection error - starting retry attempts:', error.message);
     
-    // Get webhook URL and send error notification
-    const config = await getConfig();
-    if (config.slackWebhookUrl) {
-      await sendErrorNotification(config.slackWebhookUrl, error);
+    // Only send Slack notification for VPN/network errors, not login errors
+    if (!isLoginError) {
+      const config = await getConfig();
+      if (config.slackWebhookUrl) {
+        await sendErrorNotification(config.slackWebhookUrl, error);
+      }
+    } else {
+      console.log('🔑 Login error detected - login window will open automatically, no Slack notification');
     }
     
     await chrome.storage.local.set({
@@ -461,8 +468,9 @@ async function collectAllData(force = false, silent = false) {
           // Clear the checkInProgress flag before retrying
           await chrome.storage.local.remove(['checkInProgress']);
           
-          // Add a small delay to ensure cookies are fully propagated
-          await new Promise(resolve => setTimeout(resolve, 2000));
+          // Add a longer delay to ensure cookies are fully propagated
+          console.log('⏳ Waiting 5 seconds for cookies to propagate...');
+          await new Promise(resolve => setTimeout(resolve, 5000));
           
           await checkDefects(silent);
           await chrome.storage.local.remove(['needsMonitoredComponentsRetry']);
@@ -1754,7 +1762,8 @@ async function fetchSOETriageDefects() {
       headers: {
         'Accept': 'application/json',
         'OSLC-Core-Version': '2.0'
-      }
+      },
+      cache: 'no-cache' // Force fresh data, don't use cached response
     });
     
     if (!response.ok) {
@@ -1985,18 +1994,37 @@ async function attemptAutoLogin() {
     
     console.log('✓ Credentials configured, checking login status...');
     
-    // Check if already logged in
+    // Check if already logged in with better verification
     let alreadyLoggedIn = false;
     try {
       const testResponse = await fetch('https://libh-proxy1.fyre.ibm.com/buildBreakReport/rest2/defects/buildbreak/fas?fas=Messaging', {
         credentials: 'include',
-        headers: { 'Accept': 'application/json' }
+        headers: { 'Accept': 'application/json' },
+        cache: 'no-cache'
       });
       
       const contentType = testResponse.headers.get('content-type');
-      if (contentType && contentType.includes('application/json')) {
-        alreadyLoggedIn = true;
-        console.log('✓ Already logged in to IBM system');
+      if (testResponse.ok && contentType && contentType.includes('application/json')) {
+        // Verify it's actually valid data, not a redirect/error
+        try {
+          const testData = await testResponse.json();
+          if (testData && !testData.error && !testData.redirect && !testData.operation) {
+            alreadyLoggedIn = true;
+            console.log('✅ Already logged in to IBM system - verified with API');
+            
+            // Store successful login state
+            await chrome.storage.local.set({
+              lastSuccessfulLogin: new Date().toISOString(),
+              loginVerified: true
+            });
+          } else {
+            console.log('⚠️ API returned JSON but appears to be error/redirect - need to login');
+          }
+        } catch (parseError) {
+          console.log('⚠️ Could not parse API response - need to login');
+        }
+      } else {
+        console.log('⚠️ API test failed - need to login');
       }
     } catch (error) {
       console.log('Could not check login status, will open login page:', error.message);
@@ -2006,6 +2034,15 @@ async function attemptAutoLogin() {
     if (alreadyLoggedIn) {
       console.log('✓ You are already logged in. No need to authenticate again.');
       await chrome.storage.local.remove(['loginInProgress']);
+      
+      // Show success notification
+      chrome.notifications.create('already-logged-in', {
+        type: 'basic',
+        iconUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        title: '✅ Already Logged In',
+        message: 'You are already authenticated. Extension is ready to use.',
+        priority: 0
+      });
       return;
     }
     
@@ -2013,11 +2050,11 @@ async function attemptAutoLogin() {
     console.log('🔑 Not logged in, opening login page...');
     console.log('   Creating new tab for login...');
     
-    // Open the IBM page in a new tab in the BACKGROUND first
-    // If it auto-logs in, user won't see it. If manual login needed, we'll show it.
+    // Open the IBM page in a new tab in the FOREGROUND
+    // User needs to see it for manual login
     const tab = await chrome.tabs.create({
       url: 'https://libh-proxy1.fyre.ibm.com/buildBreakReport/',
-      active: false // Open in background initially
+      active: true // Open in foreground so user can see it
     });
     
     console.log(`✓ Login tab created: ID=${tab.id}, WindowID=${tab.windowId}`);
@@ -2127,29 +2164,213 @@ async function handleW3IDAuthentication(tabId, username, password) {
             !tab.url.includes('login')) {
           
           if (!authAttempted) {
-            // Auto-logged in! Close tab
-            console.log('✓ Auto-logged in successfully (already authenticated in browser)');
-            console.log('   Session cookies are now available for next scheduled check');
-            chrome.tabs.onUpdated.removeListener(listener);
-            setTimeout(async () => {
-              chrome.tabs.remove(tabId);
-              // Clear login in progress flag only
-              await chrome.storage.local.remove(['loginInProgress']);
-              console.log('✓ Login complete - cookies ready for next check');
-            }, 2000);
-            resolve();
+            // Page loaded, but need to verify actual authentication by testing API
+            console.log('📄 Build Break Report page loaded, verifying authentication...');
+            
+            // Wait a bit for page to fully load before testing API
+            await new Promise(resolve => setTimeout(resolve, 1500));
+            
+            // Test API to verify we're actually logged in
+            try {
+              const testResponse = await fetch('https://libh-proxy1.fyre.ibm.com/buildBreakReport/rest2/defects/buildbreak/fas?fas=Messaging', {
+                credentials: 'include',
+                headers: { 'Accept': 'application/json' },
+                cache: 'no-cache'
+              });
+              
+              const contentType = testResponse.headers.get('content-type');
+              const isJsonResponse = contentType && contentType.includes('application/json');
+              
+              console.log(`API test: status=${testResponse.status}, contentType=${contentType}, isJson=${isJsonResponse}`);
+              
+              if (testResponse.ok && isJsonResponse) {
+                // Verify we can actually parse the JSON and it's not an error
+                try {
+                  const testData = await testResponse.json();
+                  
+                  // Check if it's a valid defects response (not a login redirect)
+                  if (testData && !testData.error && !testData.redirect && !testData.operation) {
+                    // Actually logged in!
+                    console.log('✅ Authentication VERIFIED - API returned valid defects data');
+                    console.log('   Waiting 3 seconds for session cookies to fully propagate...');
+                    
+                    // Store successful login state
+                    await chrome.storage.local.set({
+                      lastSuccessfulLogin: new Date().toISOString(),
+                      loginVerified: true
+                    });
+                    
+                    chrome.tabs.onUpdated.removeListener(listener);
+                    
+                    // Show success notification
+                    chrome.notifications.create('login-success', {
+                      type: 'basic',
+                      iconUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+                      title: '✅ Login Successful',
+                      message: 'You are now logged in to IBM Build Break Report.',
+                      priority: 1
+                    });
+                    
+                    setTimeout(async () => {
+                      try {
+                        await chrome.tabs.remove(tabId);
+                      } catch (e) {
+                        console.log('Tab already closed');
+                      }
+                      await chrome.storage.local.remove(['loginInProgress']);
+                      console.log('✓ Login complete - cookies ready for next check');
+                    }, 3000);
+                    resolve();
+                    return;
+                  } else {
+                    console.log('⚠️ API returned JSON but it appears to be an error/redirect response');
+                  }
+                } catch (parseError) {
+                  console.log('⚠️ Could not parse API response as JSON:', parseError.message);
+                }
+              }
+              
+              // If we get here, authentication failed
+              console.log('❌ Authentication FAILED - manual login required');
+              authAttempted = true;
+              
+              // Show notification and keep tab open
+              chrome.notifications.create('ibm-login-required', {
+                type: 'basic',
+                iconUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+                title: '🔐 IBM Login Required',
+                message: 'Please log in to Build Break Report with your W3 ID credentials and passkey.',
+                priority: 2,
+                requireInteraction: true
+              });
+              
+              // Keep tab open and in foreground for manual login
+              await chrome.tabs.update(tabId, { active: true });
+              const tabInfo = await chrome.tabs.get(tabId);
+              await chrome.windows.update(tabInfo.windowId, {
+                focused: true,
+                drawAttention: true,
+                state: 'normal'
+              });
+              
+              // Set up a periodic check to see when user completes login
+              const loginCheckInterval = setInterval(async () => {
+                try {
+                  const recheckResponse = await fetch('https://libh-proxy1.fyre.ibm.com/buildBreakReport/rest2/defects/buildbreak/fas?fas=Messaging', {
+                    credentials: 'include',
+                    headers: { 'Accept': 'application/json' },
+                    cache: 'no-cache'
+                  });
+                  
+                  const recheckContentType = recheckResponse.headers.get('content-type');
+                  if (recheckResponse.ok && recheckContentType && recheckContentType.includes('application/json')) {
+                    const recheckData = await recheckResponse.json();
+                    if (recheckData && !recheckData.error && !recheckData.redirect) {
+                      // Login successful!
+                      clearInterval(loginCheckInterval);
+                      console.log('✅ Manual login detected as successful!');
+                      
+                      await chrome.storage.local.set({
+                        lastSuccessfulLogin: new Date().toISOString(),
+                        loginVerified: true
+                      });
+                      
+                      chrome.notifications.create('login-success', {
+                        type: 'basic',
+                        iconUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+                        title: '✅ Login Successful',
+                        message: 'You are now logged in. The extension will now work properly.',
+                        priority: 1
+                      });
+                      
+                      setTimeout(async () => {
+                        try {
+                          await chrome.tabs.remove(tabId);
+                        } catch (e) {
+                          console.log('Tab already closed');
+                        }
+                        await chrome.storage.local.remove(['loginInProgress']);
+                      }, 2000);
+                      
+                      chrome.tabs.onUpdated.removeListener(listener);
+                      resolve();
+                    }
+                  }
+                } catch (e) {
+                  // Continue checking
+                }
+              }, 3000); // Check every 3 seconds
+              
+              // Stop checking after 5 minutes
+              setTimeout(() => {
+                clearInterval(loginCheckInterval);
+              }, 300000);
+              
+            } catch (error) {
+              console.log('⚠️ API test failed:', error.message, '- assuming manual login needed');
+              authAttempted = true;
+              
+              // Show notification and keep tab open
+              chrome.notifications.create('ibm-login-required', {
+                type: 'basic',
+                iconUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+                title: '🔐 IBM Login Required',
+                message: 'Please log in to Build Break Report with your W3 ID credentials and passkey.',
+                priority: 2,
+                requireInteraction: true
+              });
+              
+              await chrome.tabs.update(tabId, { active: true });
+            }
           } else {
-            // Logged in after manual authentication
-            console.log('✓ Successfully logged in to IBM system after manual authentication!');
-            console.log('   Session cookies are now available for next scheduled check');
-            chrome.tabs.onUpdated.removeListener(listener);
-            setTimeout(async () => {
-              chrome.tabs.remove(tabId);
-              // Clear login in progress flag only
-              await chrome.storage.local.remove(['loginInProgress']);
-              console.log('✓ Login complete - cookies ready for next check');
-            }, 2000);
-            resolve();
+            // This branch is for when authAttempted is already true
+            // Check if login is now successful
+            console.log('🔄 Checking if manual login completed...');
+            
+            try {
+              const recheckResponse = await fetch('https://libh-proxy1.fyre.ibm.com/buildBreakReport/rest2/defects/buildbreak/fas?fas=Messaging', {
+                credentials: 'include',
+                headers: { 'Accept': 'application/json' },
+                cache: 'no-cache'
+              });
+              
+              const recheckContentType = recheckResponse.headers.get('content-type');
+              if (recheckResponse.ok && recheckContentType && recheckContentType.includes('application/json')) {
+                const recheckData = await recheckResponse.json();
+                if (recheckData && !recheckData.error && !recheckData.redirect) {
+                  console.log('✅ Successfully logged in to IBM system after manual authentication!');
+                  console.log('   Session cookies are now available for next scheduled check');
+                  
+                  await chrome.storage.local.set({
+                    lastSuccessfulLogin: new Date().toISOString(),
+                    loginVerified: true
+                  });
+                  
+                  chrome.tabs.onUpdated.removeListener(listener);
+                  
+                  chrome.notifications.create('login-success', {
+                    type: 'basic',
+                    iconUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+                    title: '✅ Login Successful',
+                    message: 'You are now logged in. The extension will now work properly.',
+                    priority: 1
+                  });
+                  
+                  setTimeout(async () => {
+                    try {
+                      await chrome.tabs.remove(tabId);
+                    } catch (e) {
+                      console.log('Tab already closed');
+                    }
+                    await chrome.storage.local.remove(['loginInProgress']);
+                    console.log('✓ Login complete - cookies ready for next check');
+                  }, 2000);
+                  resolve();
+                }
+              }
+            } catch (e) {
+              console.log('Still waiting for manual login...');
+            }
           }
         }
       }

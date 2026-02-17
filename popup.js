@@ -22,6 +22,9 @@ async function loadStatus() {
       slackWebhookUrl: ''
     });
     
+    // Check login status
+    const localStorage = await chrome.storage.local.get(['loginVerified', 'lastSuccessfulLogin', 'loginInProgress']);
+    
     // Update status
     const statusDiv = document.getElementById('status');
     const statusText = document.getElementById('statusText');
@@ -33,12 +36,20 @@ async function loadStatus() {
     toggleLabel.textContent = config.paused ? 'OFF' : 'ON';
     toggleLabel.style.color = config.paused ? '#dc3545' : '#28a745';
     
-    if (config.paused) {
+    // Check if login is in progress
+    if (localStorage.loginInProgress) {
+      statusDiv.className = 'status warning';
+      statusText.textContent = '🔐 Login in Progress...';
+    } else if (!localStorage.loginVerified) {
+      // Not logged in
+      statusDiv.className = 'status warning';
+      statusText.textContent = '⚠️ Not Logged In - Click Settings to Login';
+    } else if (config.paused) {
       statusDiv.className = 'status disabled';
       statusText.textContent = 'Paused';
     } else if (config.enabled && config.slackWebhookUrl) {
       statusDiv.className = 'status enabled';
-      statusText.textContent = 'Active';
+      statusText.textContent = '✅ Active & Logged In';
     } else if (!config.slackWebhookUrl) {
       statusDiv.className = 'status disabled';
       statusText.textContent = 'Not Configured - Click Settings';
@@ -58,6 +69,28 @@ async function loadStatus() {
         dateStyle: 'short',
         timeStyle: 'short'
       });
+    }
+    
+    // Show last successful login time if available
+    if (localStorage.lastSuccessfulLogin) {
+      const loginDate = new Date(localStorage.lastSuccessfulLogin);
+      const loginInfo = document.createElement('div');
+      loginInfo.style.fontSize = '11px';
+      loginInfo.style.color = '#666';
+      loginInfo.style.marginTop = '5px';
+      loginInfo.textContent = `Last login: ${loginDate.toLocaleString('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        dateStyle: 'short',
+        timeStyle: 'short'
+      })}`;
+      
+      // Add to status div if not already there
+      const existingLoginInfo = statusDiv.querySelector('.login-info');
+      if (existingLoginInfo) {
+        existingLoginInfo.remove();
+      }
+      loginInfo.className = 'login-info';
+      statusDiv.appendChild(loginInfo);
     }
     
   } catch (error) {
