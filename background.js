@@ -486,6 +486,10 @@ async function collectAllData(force = false, silent = false) {
     
     // 2. Collect data for all components (for component explorer)
     // Note: SOE Triage defects are already fetched in checkDefects() before sending notification
+    // Add delay to ensure session stability between monitored components and all-components collection
+    console.log('⏳ Waiting 3 seconds before collecting all components data...');
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    
     console.log('📋 Collecting all components data...');
     await storeAllComponentsData();
     
@@ -506,6 +510,37 @@ async function collectAllData(force = false, silent = false) {
 }
 
 // Main function to check defects and send notification
+// Warm up the Build Break Report session to ensure it's fully initialized
+async function warmUpBuildBreakSession() {
+  try {
+    console.log('🔥 Warming up Build Break Report session...');
+    
+    // Make a simple request to the main page to initialize the session
+    const warmupUrl = 'https://libh-proxy1.fyre.ibm.com/buildBreakReport/';
+    
+    const response = await fetch(warmupUrl, {
+      credentials: 'include',
+      headers: {
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+      },
+      cache: 'no-cache'
+    });
+    
+    if (response.ok) {
+      console.log('✓ Build Break Report session warmed up successfully');
+      // Small delay to ensure session is fully established
+      await new Promise(resolve => setTimeout(resolve, 500));
+      return true;
+    } else {
+      console.warn(`⚠️ Session warm-up returned status ${response.status}`);
+      return false;
+    }
+  } catch (error) {
+    console.warn('⚠️ Session warm-up failed:', error.message);
+    return false;
+  }
+}
+
 async function checkDefects(silent = false) {
   try {
     // Prevent duplicate simultaneous checks
@@ -538,6 +573,9 @@ async function checkDefects(silent = false) {
     }
     
     console.log(`Checking defects for ${componentNames.length} component(s): ${componentNames.join(', ')}`);
+    
+    // Warm up the Build Break Report session before making API calls
+    await warmUpBuildBreakSession();
     
     // Fetch defects for all components and group by component
     const componentDefectsMap = [];
@@ -1206,6 +1244,14 @@ async function storeDailySnapshot(componentDefectsMap, totalDefects) {
 // Store data for ALL components (for component explorer feature)
 async function storeAllComponentsData() {
   try {
+    // Use the same reliable session warm-up as checkDefects()
+    console.log('🔥 Warming up session for all components collection...');
+    const sessionReady = await warmUpBuildBreakSession();
+    
+    if (!sessionReady) {
+      console.warn('⚠️ Session warm-up failed - attempting collection anyway...');
+    }
+    
     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
     
     // List of ALL available components
@@ -1236,6 +1282,11 @@ async function storeAllComponentsData() {
     
     console.log(`📊 Collecting data for ${allComponents.length} components...`);
     
+    let successCount = 0;
+    let errorCount = 0;
+    let totalDefects = 0;
+    let sessionRefreshed = false;
+    
     // Fetch data for each component
     for (const componentName of allComponents) {
       const apiUrl = `https://libh-proxy1.fyre.ibm.com/buildBreakReport/rest2/defects/buildbreak/fas?fas=${encodeURIComponent(componentName)}`;
@@ -1245,6 +1296,97 @@ async function storeAllComponentsData() {
           credentials: 'include',
           headers: { 'Accept': 'application/json' }
         });
+        
+        // Handle 401 errors with session refresh retry (only once for all components)
+        if (response.status === 401 && !sessionRefreshed) {
+          console.log(`🔑 Got 401 for ${componentName} - refreshing session once for all remaining components...`);
+          sessionRefreshed = true;
+          
+          // Refresh session
+          await warmUpBuildBreakSession();
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          
+          // Retry the request for this component
+          const retryResponse = await fetch(apiUrl, {
+            credentials: 'include',
+            headers: { 'Accept': 'application/json' }
+          });
+          
+          if (retryResponse.ok) {
+            const data = await retryResponse.json();
+            const allDefects = Array.isArray(data) ? data : (data.defects || []);
+            
+            let untriaged = 0;
+            let testBugs = 0;
+            let productBugs = 0;
+            let infraBugs = 0;
+            
+            allDefects.forEach(defect => {
+              const triageTags = (defect.triageTags || defect.tags || []);
+              const tagsArray = Array.isArray(triageTags) ? triageTags : [];
+              
+              const hasTriagedTag = tagsArray.some(tag => {
+                const lowerTag = tag.toLowerCase();
+                return lowerTag.includes('test_bug') ||
+                       lowerTag.includes('product_bug') ||
+                       lowerTag.includes('infrastructure_bug') ||
+                       lowerTag === 'test' ||
+                       lowerTag === 'product' ||
+                       lowerTag === 'infrastructure';
+              });
+              
+              if (!hasTriagedTag) {
+                untriaged++;
+              } else {
+                const hasTestTag = tagsArray.some(tag => {
+                  const lowerTag = tag.toLowerCase();
+                  return lowerTag.includes('test_bug') || lowerTag === 'test';
+                });
+                const hasProductTag = tagsArray.some(tag => {
+                  const lowerTag = tag.toLowerCase();
+                  return lowerTag.includes('product_bug') || lowerTag === 'product';
+                });
+                const hasInfraTag = tagsArray.some(tag => {
+                  const lowerTag = tag.toLowerCase();
+                  return lowerTag.includes('infrastructure_bug') || lowerTag === 'infrastructure';
+                });
+                
+                if (hasTestTag) {
+                  testBugs++;
+                } else if (hasProductTag) {
+                  productBugs++;
+                } else if (hasInfraTag) {
+                  infraBugs++;
+                }
+              }
+            });
+            
+            // Store component data
+            allSnapshots[today][componentName] = {
+              total: allDefects.length,
+              untriaged: untriaged,
+              testBugs: testBugs,
+              productBugs: productBugs,
+              infraBugs: infraBugs
+            };
+            
+            successCount++;
+            totalDefects += allDefects.length;
+            
+            if (allDefects.length > 0) {
+              console.log(`✓ ${componentName}: ${allDefects.length} total (${untriaged} untriaged, ${testBugs} test, ${productBugs} product, ${infraBugs} infra) [retry success]`);
+            }
+            
+            // Continue to next component
+            await new Promise(resolve => setTimeout(resolve, 100));
+            continue;
+          } else {
+            console.warn(`⚠️ ${componentName}: HTTP ${retryResponse.status} (after session refresh)`);
+            errorCount++;
+            await new Promise(resolve => setTimeout(resolve, 100));
+            continue;
+          }
+        }
         
         if (response.ok) {
           const data = await response.json();
@@ -1304,10 +1446,24 @@ async function storeAllComponentsData() {
             infraBugs: infraBugs
           };
           
-          console.log(`✓ ${componentName}: ${allDefects.length} defects`);
+          successCount++;
+          totalDefects += allDefects.length;
+          
+          // Only log components with defects to reduce noise
+          if (allDefects.length > 0) {
+            console.log(`✓ ${componentName}: ${allDefects.length} total (${untriaged} untriaged, ${testBugs} test, ${productBugs} product, ${infraBugs} infra)`);
+          }
+        } else if (response.status === 401) {
+          // 401 after session refresh already attempted - skip this component
+          console.warn(`⚠️ ${componentName}: HTTP 401 (session refresh already attempted)`);
+          errorCount++;
+        } else {
+          console.warn(`⚠️ ${componentName}: HTTP ${response.status}`);
+          errorCount++;
         }
       } catch (error) {
-        console.error(`Error fetching ${componentName}:`, error);
+        console.error(`❌ ${componentName}: ${error.message}`);
+        errorCount++;
         // Store empty data on error
         allSnapshots[today][componentName] = {
           total: 0,
@@ -1331,7 +1487,13 @@ async function storeAllComponentsData() {
     
     // Save all components snapshots
     await chrome.storage.local.set({ allComponentsSnapshots: allSnapshots });
-    console.log(`✅ All components data stored for ${today}`);
+    
+    // Log summary
+    console.log(`\n📊 All Components Collection Summary:`);
+    console.log(`   ✅ Success: ${successCount}/${allComponents.length} components`);
+    console.log(`   ❌ Errors: ${errorCount}/${allComponents.length} components`);
+    console.log(`   📈 Total defects collected: ${totalDefects}`);
+    console.log(`   💾 Data stored for: ${today}\n`);
     
   } catch (error) {
     console.error('Error storing all components data:', error);
@@ -1684,8 +1846,9 @@ async function openJazzRTCLoginPage() {
       
       console.log('✓ Credentials auto-filled and submitted');
       
-      // Wait for login to complete
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      // Wait longer for login to complete and cookies to be set
+      console.log('⏳ Waiting 8 seconds for Jazz/RTC login to complete...');
+      await new Promise(resolve => setTimeout(resolve, 8000));
       
       // Close the tab after successful login
       await chrome.tabs.remove(tab.id);
@@ -1734,14 +1897,32 @@ async function fetchSOETriageDefects() {
       console.log('🔑 Jazz/RTC authentication required - opening login page...');
       await openJazzRTCLoginPage();
       
-      // Wait for login to complete before continuing
-      console.log('⏳ Waiting 5 seconds for Jazz/RTC login to complete...');
-      await new Promise(resolve => setTimeout(resolve, 5000));
+      // Wait longer for login to complete and cookies to propagate
+      console.log('⏳ Waiting 10 seconds for Jazz/RTC login and cookies to propagate...');
+      await new Promise(resolve => setTimeout(resolve, 10000));
       
       // Check again if authenticated after login
       const isAuthenticatedNow = await isAuthenticatedWithJazzRTC();
       if (!isAuthenticatedNow) {
-        console.log('⚠️ Jazz/RTC login did not complete - will use cached data if available');
+        console.log('⚠️ Jazz/RTC login did not complete after 10 seconds');
+        console.log('💡 Tip: Jazz/RTC may require manual login. Opening login page for manual authentication...');
+        
+        // Open login page for manual authentication
+        await chrome.tabs.create({
+          url: 'https://wasrtc.hursley.ibm.com:9443/jazz/authenticated/identity',
+          active: true
+        });
+        
+        // Show notification
+        chrome.notifications.create('jazz-manual-login-required', {
+          type: 'basic',
+          iconUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+          title: '🔐 Jazz/RTC Manual Login Required',
+          message: 'Please log in to Jazz/RTC manually. SOE Triage data will be available after login.',
+          priority: 2,
+          requireInteraction: true
+        });
+        
         // Return cached data if available
         const storage = await chrome.storage.local.get(['soeTriageDefects']);
         return storage.soeTriageDefects || [];
@@ -1797,7 +1978,7 @@ async function fetchSOETriageDefects() {
     console.log(`✅ Found ${workItems.length} SOE Triage overdue defects (FRESH from API)`);
     
     // Store in chrome.storage for dashboard
-    await chrome.storage.local.set({ 
+    await chrome.storage.local.set({
       soeTriageDefects: workItems,
       soeTriageLastFetch: new Date().toISOString()
     });
