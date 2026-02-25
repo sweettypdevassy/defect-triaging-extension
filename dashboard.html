@@ -516,7 +516,7 @@
             <!-- KPI cards will be inserted here -->
         </div>
 
-        <!-- Row 2: Defect Trend + Defect Distribution -->
+        <!-- Row 2: Defect Trend + Week vs Week -->
         <div class="row-2">
             <div class="chart-card">
                 <div class="chart-title">📈 Defect Trend</div>
@@ -526,14 +526,14 @@
             </div>
 
             <div class="chart-card">
-                <div class="chart-title">📊 Defect Distribution</div>
+                <div class="chart-title">📊 Week vs Week</div>
                 <div class="chart-container">
-                    <canvas id="pieChart"></canvas>
+                    <canvas id="comparisonChart"></canvas>
                 </div>
             </div>
         </div>
 
-        <!-- Row 3: Top Components + Week vs Week -->
+        <!-- Row 3: Component-wise Status + Defects by Component -->
         <div class="row-3">
             <div class="chart-card">
                 <div class="chart-title">📊 Component-wise Defect Status</div>
@@ -543,9 +543,9 @@
             </div>
 
             <div class="chart-card">
-                <div class="chart-title">📊 Week vs Week</div>
+                <div class="chart-title">📊 Defects by Component</div>
                 <div class="chart-container">
-                    <canvas id="comparisonChart"></canvas>
+                    <canvas id="pieChart"></canvas>
                 </div>
             </div>
         </div>
@@ -602,7 +602,7 @@
                 <!-- KPI Cards -->
                 <div class="kpi-row" id="explorerKpiRow"></div>
 
-                <!-- Row 2: Defect Trend + Defect Distribution -->
+                <!-- Row 2: Defect Trend + Week vs Week -->
                 <div class="row-2">
                     <div class="chart-card">
                         <div class="chart-title">📈 Defect Trend</div>
@@ -612,14 +612,14 @@
                     </div>
 
                     <div class="chart-card">
-                        <div class="chart-title">📊 Defect Distribution</div>
+                        <div class="chart-title">📊 Week vs Week</div>
                         <div class="chart-container">
-                            <canvas id="explorerPieChart"></canvas>
+                            <canvas id="explorerComparisonChart"></canvas>
                         </div>
                     </div>
                 </div>
 
-                <!-- Row 3: Component Breakdown + Week Comparison -->
+                <!-- Row 3: Component-wise Status + Defects by Component -->
                 <div class="row-3">
                     <div class="chart-card">
                         <div class="chart-title">📊 Component-wise Defect Status</div>
@@ -629,9 +629,9 @@
                     </div>
 
                     <div class="chart-card">
-                        <div class="chart-title">📊 Week vs Week</div>
+                        <div class="chart-title">📊 Defects by Component</div>
                         <div class="chart-container">
-                            <canvas id="explorerComparisonChart"></canvas>
+                            <canvas id="explorerPieChart"></canvas>
                         </div>
                     </div>
                 </div>

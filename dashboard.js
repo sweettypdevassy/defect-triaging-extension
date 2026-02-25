@@ -94,7 +94,7 @@ function renderDashboard(data) {
 
     // Render charts
     renderLineChart(data.dailyTrend);
-    renderPieChart(data.triageBreakdown, data.summary);
+    renderPieChart(data.componentBreakdown, data.summary);
     renderBarChart(data.componentBreakdown);
     
     // Render week vs week comparison chart
@@ -376,7 +376,7 @@ function renderLineChart(dailyTrend) {
     });
 }
 
-function renderPieChart(triageBreakdown, summary) {
+function renderPieChart(componentBreakdown, summary) {
     const ctx = document.getElementById('pieChart').getContext('2d');
     
     // Destroy existing chart
@@ -384,18 +384,24 @@ function renderPieChart(triageBreakdown, summary) {
         chartInstances.pieChart.destroy();
     }
     
+    // Get component data
+    const components = componentBreakdown.labels || [];
+    const totals = componentBreakdown.total || [];
+    
+    // Generate colors for each component
+    const colors = [
+        '#ff6b9d', '#ffad1f', '#1d9bf0', '#00d4aa',
+        '#a78bfa', '#fb923c', '#34d399', '#f472b6',
+        '#60a5fa', '#fbbf24', '#4ade80', '#c084fc'
+    ];
+    
     chartInstances.pieChart = new Chart(ctx, {
         type: 'doughnut',
         data: {
-            labels: ['Untriaged', 'Test Bug', 'Product Bug', 'Infrastructure'],
+            labels: components,
             datasets: [{
-                data: [
-                    triageBreakdown.untriaged,
-                    triageBreakdown.testBug,
-                    triageBreakdown.productBug,
-                    triageBreakdown.infrastructure
-                ],
-                backgroundColor: ['#ff6b9d', '#ffad1f', '#1d9bf0', '#00d4aa'],
+                data: totals,
+                backgroundColor: colors.slice(0, components.length),
                 borderWidth: 0,
                 borderRadius: 4
             }]
@@ -424,7 +430,16 @@ function renderPieChart(triageBreakdown, summary) {
                     borderWidth: 1,
                     padding: 8,
                     bodyFont: { size: 10 },
-                    titleFont: { size: 10 }
+                    titleFont: { size: 10 },
+                    callbacks: {
+                        label: function(context) {
+                            const label = context.label || '';
+                            const value = context.parsed || 0;
+                            const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                            const percentage = ((value / total) * 100).toFixed(1);
+                            return `${label}: ${value} (${percentage}%)`;
+                        }
+                    }
                 }
             }
         },
@@ -903,6 +918,7 @@ async function generateExplorerDashboard() {
         },
         componentBreakdown: {
             labels: selectedComponents,
+            total: selectedComponents.map(comp => allSnapshots[latestDate]?.[comp]?.total || 0),
             untriaged: selectedComponents.map(comp => allSnapshots[latestDate]?.[comp]?.untriaged || 0),
             testBugs: selectedComponents.map(comp => allSnapshots[latestDate]?.[comp]?.testBugs || 0),
             productBugs: selectedComponents.map(comp => allSnapshots[latestDate]?.[comp]?.productBugs || 0),
@@ -923,7 +939,7 @@ async function generateExplorerDashboard() {
     console.log('Explorer: Rendering charts with weekComparison:', dashboardData.weekComparison);
     renderExplorerKPICards(dashboardData.summary);
     renderExplorerLineChart(dashboardData.dailyTrend);
-    renderExplorerPieChart(dashboardData.triageBreakdown, dashboardData.summary);
+    renderExplorerPieChart(dashboardData.componentBreakdown, dashboardData.summary);
     renderExplorerBarChart(dashboardData.componentBreakdown);
     renderExplorerComparisonChart(dashboardData.weekComparison);
     
@@ -1111,17 +1127,28 @@ function renderExplorerLineChart(dailyTrend) {
     });
 }
 
-function renderExplorerPieChart(triageBreakdown, summary) {
+function renderExplorerPieChart(componentBreakdown, summary) {
     const ctx = document.getElementById('explorerPieChart').getContext('2d');
     if (chartInstances.explorerPieChart) chartInstances.explorerPieChart.destroy();
+    
+    // Get component data
+    const components = componentBreakdown.labels || [];
+    const totals = componentBreakdown.total || [];
+    
+    // Generate colors for each component
+    const colors = [
+        '#ff6b9d', '#ffad1f', '#1d9bf0', '#00d4aa',
+        '#a78bfa', '#fb923c', '#34d399', '#f472b6',
+        '#60a5fa', '#fbbf24', '#4ade80', '#c084fc'
+    ];
     
     chartInstances.explorerPieChart = new Chart(ctx, {
         type: 'doughnut',
         data: {
-            labels: ['Untriaged', 'Test Bug', 'Product Bug', 'Infrastructure'],
+            labels: components,
             datasets: [{
-                data: [triageBreakdown.untriaged, triageBreakdown.testBug, triageBreakdown.productBug, triageBreakdown.infrastructure],
-                backgroundColor: ['#ff6b9d', '#ffad1f', '#1d9bf0', '#00d4aa'],
+                data: totals,
+                backgroundColor: colors.slice(0, components.length),
                 borderWidth: 0,
                 borderRadius: 4
             }]
@@ -1132,7 +1159,25 @@ function renderExplorerPieChart(triageBreakdown, summary) {
             cutout: '70%',
             plugins: {
                 legend: { position: 'bottom', labels: { color: '#e1e8ed', font: { size: 10, weight: '600' }, padding: 8, usePointStyle: true, boxWidth: 8, boxHeight: 8 } },
-                tooltip: { backgroundColor: '#1a1f3a', titleColor: '#fff', bodyColor: '#e1e8ed', borderColor: 'rgba(255, 255, 255, 0.1)', borderWidth: 1, padding: 8, bodyFont: { size: 10 }, titleFont: { size: 10 } }
+                tooltip: {
+                    backgroundColor: '#1a1f3a',
+                    titleColor: '#fff',
+                    bodyColor: '#e1e8ed',
+                    borderColor: 'rgba(255, 255, 255, 0.1)',
+                    borderWidth: 1,
+                    padding: 8,
+                    bodyFont: { size: 10 },
+                    titleFont: { size: 10 },
+                    callbacks: {
+                        label: function(context) {
+                            const label = context.label || '';
+                            const value = context.parsed || 0;
+                            const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                            const percentage = ((value / total) * 100).toFixed(1);
+                            return `${label}: ${value} (${percentage}%)`;
+                        }
+                    }
+                }
             }
         },
         plugins: [{
