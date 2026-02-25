@@ -1560,16 +1560,52 @@ async function generateWeeklyDashboard() {
       infraBugs: latestSnapshot.infraBugs || 0
     };
     
-    // Get last week's data for comparison (7 days ago)
-    const lastWeekDate = new Date();
+    // Get last week's data for comparison
+    // Try multiple strategies to find comparable data:
+    // 1. Try 7 days before the start of current week
+    // 2. If not found, try the oldest available snapshot (for new installations)
+    // 3. If still not found, use zero values
+    
+    let lastWeekData = { total: 0, untriaged: 0 };
+    let lastWeekDateUsed = null;
+    
+    // Strategy 1: Try 7 days before current week start
+    const lastWeekDate = new Date(dates[0]);
     lastWeekDate.setDate(lastWeekDate.getDate() - 7);
     const lastWeekDateStr = lastWeekDate.toISOString().split('T')[0];
-    const lastWeekSnapshot = snapshots[lastWeekDateStr] || {};
     
-    const lastWeekData = {
-      total: lastWeekSnapshot.total || 0,
-      untriaged: lastWeekSnapshot.untriaged || 0
-    };
+    if (snapshots[lastWeekDateStr]) {
+      lastWeekData = {
+        total: snapshots[lastWeekDateStr].total || 0,
+        untriaged: snapshots[lastWeekDateStr].untriaged || 0
+      };
+      lastWeekDateUsed = lastWeekDateStr;
+      console.log(`Using last week data from ${lastWeekDateStr}`);
+    } else {
+      // Strategy 2: Use oldest available snapshot if we don't have 7-day-old data
+      const availableDates = Object.keys(snapshots).sort();
+      if (availableDates.length > 0) {
+        const oldestDate = availableDates[0];
+        const oldestSnapshot = snapshots[oldestDate];
+        
+        // Only use oldest snapshot if it's at least 2 days old (to show some trend)
+        const oldestDateObj = new Date(oldestDate);
+        const daysDiff = Math.floor((new Date(latestDate) - oldestDateObj) / (1000 * 60 * 60 * 24));
+        
+        if (daysDiff >= 2) {
+          lastWeekData = {
+            total: oldestSnapshot.total || 0,
+            untriaged: oldestSnapshot.untriaged || 0
+          };
+          lastWeekDateUsed = oldestDate;
+          console.log(`Using oldest available snapshot from ${oldestDate} (${daysDiff} days ago) for comparison`);
+        } else {
+          console.log('Not enough historical data for week comparison (need at least 2 days)');
+        }
+      } else {
+        console.log('No historical snapshots available for week comparison');
+      }
+    }
     
     // Calculate trend percentage
     const trendPercentage = lastWeekData.total > 0
@@ -1627,7 +1663,8 @@ async function generateWeeklyDashboard() {
       },
       weekComparison: {
         lastWeek: lastWeekData,
-        thisWeek: thisWeekData
+        thisWeek: thisWeekData,
+        lastWeekDate: lastWeekDateUsed // Add the date used for comparison
       },
       priorityItems: priorityItems,
       componentDetails: componentDetails

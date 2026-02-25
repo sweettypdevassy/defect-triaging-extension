@@ -62,15 +62,32 @@ async function loadDashboardData() {
 }
 
 function renderDashboard(data) {
-    // Set header info
-    document.getElementById('weekRange').textContent = `${data.weekStart} → ${data.weekEnd}`;
-    document.getElementById('generatedTime').textContent = `Last Updated: ${new Date(data.generatedAt).toLocaleString('en-IN', {
-        month: 'short',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true
-    })}`;
+    // Set header info with safety checks
+    if (data.weekStart && data.weekEnd) {
+        document.getElementById('weekRange').textContent = `${data.weekStart} → ${data.weekEnd}`;
+    } else {
+        // Fallback if weekStart/weekEnd are missing
+        const today = new Date().toISOString().split('T')[0];
+        document.getElementById('weekRange').textContent = `Week ending ${today}`;
+    }
+    
+    if (data.generatedAt) {
+        document.getElementById('generatedTime').textContent = `Last Updated: ${new Date(data.generatedAt).toLocaleString('en-IN', {
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true
+        })}`;
+    } else {
+        document.getElementById('generatedTime').textContent = `Last Updated: ${new Date().toLocaleString('en-IN', {
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true
+        })}`;
+    }
 
     // Render KPI cards with icons
     renderKPICards(data.summary);
@@ -194,8 +211,15 @@ function renderWeekComparisonChart(data) {
     Chart.defaults.color = '#8899a6';
     Chart.defaults.borderColor = 'rgba(255, 255, 255, 0.05)';
     
+    // Build labels with dates for clarity
+    let lastWeekLabel = 'Previous';
+    if (hasLastWeekData && data.weekComparison.lastWeekDate) {
+        const date = new Date(data.weekComparison.lastWeekDate);
+        lastWeekLabel = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    }
+    
     // If no last week data, show only this week
-    const labels = hasLastWeekData ? ['Last Week', 'This Week'] : ['This Week'];
+    const labels = hasLastWeekData ? [lastWeekLabel, 'This Week'] : ['This Week'];
     const totalData = hasLastWeekData
         ? [data.weekComparison.lastWeek.total, data.summary.totalDefects]
         : [data.summary.totalDefects];
@@ -772,6 +796,91 @@ async function generateExplorerDashboard() {
     const latestDate = dates[dates.length - 1];
     const latestData = aggregatedData[latestDate] || {};
     
+    // Calculate week comparison with fallback logic
+    let lastWeekData = { total: 0, untriaged: 0 };
+    let lastWeekDateUsed = null;
+    
+    // Get all available dates from allSnapshots
+    const availableDates = Object.keys(allSnapshots).sort();
+    console.log('Explorer: Available dates in allSnapshots:', availableDates);
+    console.log('Explorer: Current week dates:', dates);
+    
+    // Strategy 1: Try 7 days before today, then try nearby dates
+    const today = new Date();
+    const lastWeekDate = new Date(today);
+    lastWeekDate.setDate(lastWeekDate.getDate() - 7);
+    const lastWeekDateStr = lastWeekDate.toISOString().split('T')[0];
+    console.log('Explorer: Looking for last week date (7 days ago from today):', lastWeekDateStr);
+    
+    // Try the exact date first, then try 1-2 days before/after
+    const datesToTry = [
+        lastWeekDateStr,
+        new Date(new Date(lastWeekDateStr).getTime() - 86400000).toISOString().split('T')[0], // -1 day
+        new Date(new Date(lastWeekDateStr).getTime() + 86400000).toISOString().split('T')[0], // +1 day
+        new Date(new Date(lastWeekDateStr).getTime() - 172800000).toISOString().split('T')[0], // -2 days
+        new Date(new Date(lastWeekDateStr).getTime() + 172800000).toISOString().split('T')[0]  // +2 days
+    ];
+    
+    let foundNearbyDate = null;
+    for (const dateToTry of datesToTry) {
+        if (allSnapshots[dateToTry]) {
+            foundNearbyDate = dateToTry;
+            console.log(`Explorer: Found nearby date: ${dateToTry}`);
+            break;
+        }
+    }
+    
+    if (foundNearbyDate) {
+        // Aggregate last week data for selected components
+        let total = 0, untriaged = 0;
+        selectedComponents.forEach(component => {
+            const compData = allSnapshots[foundNearbyDate]?.[component];
+            if (compData) {
+                total += compData.total || 0;
+                untriaged += compData.untriaged || 0;
+            }
+        });
+        lastWeekData = { total, untriaged };
+        lastWeekDateUsed = foundNearbyDate;
+        console.log(`Explorer: Using last week data from ${foundNearbyDate}`, lastWeekData);
+    } else {
+        console.log('Explorer: No nearby date found, trying fallback strategy');
+        // Strategy 2: Use oldest available snapshot that's at least 2 days before latest
+        if (availableDates.length > 0) {
+            // Find a date that's at least 2 days old and has data
+            let foundDate = null;
+            for (let i = 0; i < availableDates.length; i++) {
+                const testDate = availableDates[i];
+                const testDateObj = new Date(testDate);
+                const daysDiff = Math.floor((new Date(latestDate) - testDateObj) / (1000 * 60 * 60 * 24));
+                
+                if (daysDiff >= 2) {
+                    foundDate = testDate;
+                    break;
+                }
+            }
+            
+            if (foundDate) {
+                let total = 0, untriaged = 0;
+                selectedComponents.forEach(component => {
+                    const compData = allSnapshots[foundDate]?.[component];
+                    if (compData) {
+                        total += compData.total || 0;
+                        untriaged += compData.untriaged || 0;
+                    }
+                });
+                lastWeekData = { total, untriaged };
+                lastWeekDateUsed = foundDate;
+                const daysDiff = Math.floor((new Date(latestDate) - new Date(foundDate)) / (1000 * 60 * 60 * 24));
+                console.log(`Explorer: Using oldest available snapshot from ${foundDate} (${daysDiff} days ago)`, lastWeekData);
+            } else {
+                console.log('Explorer: No suitable historical data found (need at least 2 days difference)');
+            }
+        } else {
+            console.log('Explorer: No historical snapshots available');
+        }
+    }
+    
     const dashboardData = {
         summary: {
             totalDefects: latestData.total || 0,
@@ -798,6 +907,11 @@ async function generateExplorerDashboard() {
             testBugs: selectedComponents.map(comp => allSnapshots[latestDate]?.[comp]?.testBugs || 0),
             productBugs: selectedComponents.map(comp => allSnapshots[latestDate]?.[comp]?.productBugs || 0),
             infraBugs: selectedComponents.map(comp => allSnapshots[latestDate]?.[comp]?.infraBugs || 0)
+        },
+        weekComparison: {
+            lastWeek: lastWeekData,
+            thisWeek: { total: latestData.total || 0, untriaged: latestData.untriaged || 0 },
+            lastWeekDate: lastWeekDateUsed
         }
     };
     
@@ -806,11 +920,12 @@ async function generateExplorerDashboard() {
     document.getElementById('explorerDashboard').style.display = 'block';
     
     // Render charts
+    console.log('Explorer: Rendering charts with weekComparison:', dashboardData.weekComparison);
     renderExplorerKPICards(dashboardData.summary);
     renderExplorerLineChart(dashboardData.dailyTrend);
     renderExplorerPieChart(dashboardData.triageBreakdown, dashboardData.summary);
     renderExplorerBarChart(dashboardData.componentBreakdown);
-    renderExplorerComparisonChart(dashboardData);
+    renderExplorerComparisonChart(dashboardData.weekComparison);
     
     // Render SOE Triage table for selected components
     renderExplorerSOETriageTable(selectedComponents);
@@ -1092,26 +1207,53 @@ function renderExplorerBarChart(componentBreakdown) {
     });
 }
 
-function renderExplorerComparisonChart(data) {
+function renderExplorerComparisonChart(weekComparison) {
     const ctx = document.getElementById('explorerComparisonChart').getContext('2d');
     if (chartInstances.explorerComparisonChart) chartInstances.explorerComparisonChart.destroy();
     
     Chart.defaults.color = '#8899a6';
     Chart.defaults.borderColor = 'rgba(255, 255, 255, 0.05)';
     
+    console.log('renderExplorerComparisonChart called with:', weekComparison);
+    
+    // Check if we have last week data
+    const hasLastWeekData = weekComparison &&
+                           weekComparison.lastWeek &&
+                           weekComparison.lastWeek.total > 0;
+    
+    console.log('hasLastWeekData:', hasLastWeekData);
+    console.log('lastWeek data:', weekComparison?.lastWeek);
+    console.log('thisWeek data:', weekComparison?.thisWeek);
+    
+    // Build labels with dates for clarity
+    let lastWeekLabel = 'Previous';
+    if (hasLastWeekData && weekComparison.lastWeekDate) {
+        const date = new Date(weekComparison.lastWeekDate);
+        lastWeekLabel = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    }
+    
+    // If no last week data, show only this week
+    const labels = hasLastWeekData ? [lastWeekLabel, 'This Week'] : ['This Week'];
+    const totalData = hasLastWeekData
+        ? [weekComparison.lastWeek.total, weekComparison.thisWeek.total]
+        : [weekComparison.thisWeek.total];
+    const untriagedData = hasLastWeekData
+        ? [weekComparison.lastWeek.untriaged, weekComparison.thisWeek.untriaged]
+        : [weekComparison.thisWeek.untriaged];
+    
     chartInstances.explorerComparisonChart = new Chart(ctx, {
         type: 'bar',
         data: {
-            labels: ['This Week'],
+            labels: labels,
             datasets: [{
                 label: 'Total',
-                data: [data.summary.totalDefects],
+                data: totalData,
                 backgroundColor: '#1d9bf0',
                 borderRadius: 6,
                 barThickness: 50
             }, {
                 label: 'Untriaged',
-                data: [data.summary.untriaged],
+                data: untriagedData,
                 backgroundColor: '#ff6b9d',
                 borderRadius: 6,
                 barThickness: 50
