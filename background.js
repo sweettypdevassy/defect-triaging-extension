@@ -2278,11 +2278,11 @@ async function attemptAutoLogin() {
     console.log('🔑 Not logged in, opening login page...');
     console.log('   Creating new tab for login...');
     
-    // Open the IBM page in a new tab in the FOREGROUND
-    // User needs to see it for manual login
+    // Open the IBM page in a new tab in the BACKGROUND
+    // It will auto-login and stay in background unless user needs to take action
     const tab = await chrome.tabs.create({
       url: 'https://libh-proxy1.fyre.ibm.com/buildBreakReport/',
-      active: true // Open in foreground so user can see it
+      active: false // Open in background to not interrupt user's work
     });
     
     console.log(`✓ Login tab created: ID=${tab.id}, WindowID=${tab.windowId}`);
