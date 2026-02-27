@@ -1890,7 +1890,7 @@ async function openJazzRTCLoginPage() {
     
     const tab = await chrome.tabs.create({
       url: jazzUrl,
-      active: false // Open in background initially
+      active: true // Open in foreground so user can see the login
     });
     
     console.log(`✓ Jazz/RTC login tab created: ID=${tab.id}`);
@@ -2335,11 +2335,11 @@ async function attemptAutoLogin() {
     console.log('🔑 Not logged in, opening login page...');
     console.log('   Creating new tab for login...');
     
-    // Open the IBM page in a new tab in the BACKGROUND
-    // It will auto-login and stay in background unless user needs to take action
+    // Open the IBM page in a new tab in the FOREGROUND
+    // User needs to see the login page to authenticate
     const tab = await chrome.tabs.create({
       url: 'https://libh-proxy1.fyre.ibm.com/buildBreakReport/',
-      active: false // Open in background to not interrupt user's work
+      active: true // Open in foreground so user can login
     });
     
     console.log(`✓ Login tab created: ID=${tab.id}, WindowID=${tab.windowId}`);
@@ -2351,8 +2351,8 @@ async function attemptAutoLogin() {
       loginTabNeedsAttention: false // Will be set to true if manual login needed
     });
     
-    console.log(`✓ Login page opened in background tab ${tab.id}`);
-    console.log('   Waiting to see if manual login is required...');
+    console.log(`✓ Login page opened in foreground tab ${tab.id}`);
+    console.log('   Please complete the login process in the opened tab');
     console.log('   Monitoring tab for authentication flow...');
     
     // Still monitor for successful login, but don't try to automate the click
