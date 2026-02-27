@@ -1249,7 +1249,7 @@ async function storeAllComponentsData() {
     const sessionReady = await warmUpBuildBreakSession();
     
     if (!sessionReady) {
-      console.warn('⚠️ Session warm-up failed - attempting collection anyway...');
+      console.warn('⚠️ Session warm-up failed - will attempt re-authentication if 401 errors occur...');
     }
     
     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
@@ -1299,11 +1299,68 @@ async function storeAllComponentsData() {
         
         // Handle 401 errors with session refresh retry (only once for all components)
         if (response.status === 401 && !sessionRefreshed) {
-          console.log(`🔑 Got 401 for ${componentName} - refreshing session once for all remaining components...`);
+          console.log(`🔑 Got 401 for ${componentName} - triggering re-authentication for all remaining components...`);
           sessionRefreshed = true;
           
-          // Refresh session
-          await warmUpBuildBreakSession();
+          // First, check if there's already an IBM Build Break Report tab open and refresh it
+          console.log('🔍 Checking for existing IBM Build Break Report tabs...');
+          const tabs = await chrome.tabs.query({});
+          const ibmTabs = tabs.filter(tab =>
+            tab.url && tab.url.includes('libh-proxy1.fyre.ibm.com/buildBreakReport')
+          );
+          
+          if (ibmTabs.length > 0) {
+            console.log(`📄 Found ${ibmTabs.length} IBM Build Break Report tab(s), refreshing to show login page...`);
+            for (const tab of ibmTabs) {
+              try {
+                await chrome.tabs.reload(tab.id);
+                // Focus the first tab so user can see the login page
+                if (tab === ibmTabs[0]) {
+                  await chrome.tabs.update(tab.id, { active: true });
+                  await chrome.windows.update(tab.windowId, { focused: true });
+                  console.log(`✓ Refreshed and focused tab ${tab.id} to show login page`);
+                }
+              } catch (error) {
+                console.warn(`⚠️ Could not refresh tab ${tab.id}:`, error.message);
+              }
+            }
+          } else {
+            console.log('📄 No existing IBM Build Break Report tabs found');
+          }
+          
+          // Trigger re-authentication (will open new tab if needed)
+          console.log('🔐 Attempting automatic re-login...');
+          await attemptAutoLogin();
+          
+          // Wait for login to complete (max 60 seconds)
+          let waitCount = 0;
+          let loginSuccessful = false;
+          
+          while (waitCount < 60) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            const checkStorage = await chrome.storage.local.get(['loginVerified', 'loginInProgress']);
+            
+            if (checkStorage.loginVerified && !checkStorage.loginInProgress) {
+              console.log('✅ Re-authentication successful, continuing with data collection...');
+              loginSuccessful = true;
+              break;
+            }
+            
+            if (!checkStorage.loginInProgress) {
+              console.log('⚠️ Login not in progress but not verified - may need manual intervention');
+              break;
+            }
+            
+            waitCount++;
+          }
+          
+          if (!loginSuccessful) {
+            console.error('❌ Re-authentication failed or timed out - cannot collect remaining data');
+            console.log('   Please login manually and the extension will resume automatically');
+            break; // Exit the loop, don't try remaining components
+          }
+          
+          // Wait a bit more for session to stabilize
           await new Promise(resolve => setTimeout(resolve, 2000));
           
           // Retry the request for this component
